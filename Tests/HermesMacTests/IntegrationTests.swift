@@ -112,6 +112,38 @@ import Security
         XCTAssertFalse(store.canSend)
     }
 
+    func testLargeToolHistoryUsesBoundedHTTPPagesAndMetadataOnlyResume() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        _ = try await fixture(["action": .string("configure"), "large_history": .bool(true)])
+        await store.openSession("large-history")
+        let c = try XCTUnwrap(store.current)
+        XCTAssertTrue(store.connected)
+        XCTAssertNotNil(c.runtimeID)
+        XCTAssertNil(c.readOnlyReason)
+        XCTAssertEqual(c.historyOffset, 20)
+        XCTAssertTrue(c.hasOlder)
+        XCTAssertTrue(c.messages.allSatisfy { $0.role == "user" || $0.role == "assistant" })
+        XCTAssertEqual(c.messages.first?.text, "message-46")
+        XCTAssertEqual(c.messages.last?.text, "message-64")
+        for _ in 0..<3 { await store.loadOlder(c) }
+        XCTAssertEqual(c.historyOffset, 66)
+        XCTAssertFalse(c.hasOlder)
+        XCTAssertEqual(c.messages.count, 43)
+        XCTAssertEqual(Set(c.messages.map(\.id)).count, c.messages.count)
+        XCTAssertFalse(c.messages.contains { $0.role == "tool" })
+        await store.connect()
+        XCTAssertTrue(store.connected)
+        XCTAssertNil(c.readOnlyReason)
+        let stats = try await fixture(["action": .string("stats")])
+        let resumes = stats["requests"].array.filter { $0["method"].string == "session.resume" }
+        XCTAssertFalse(resumes.isEmpty)
+        XCTAssertTrue(resumes.allSatisfy { $0["params"]["omit_messages"].bool })
+        XCTAssertTrue(stats["history_reads"].array.allSatisfy {
+            $0["limit"].string == "20" && $0["order"].string == "latest" && $0["inline_images"].string == "false"
+        })
+    }
+
     func testDisconnectReattachesWithoutResubmittingAndInterrupts() async throws {
         let (store, client, defaults, name) = try await prepare()
         defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
@@ -133,6 +165,20 @@ import Security
         await store.interrupt()
         try await eventually { !c.generating }
         XCTAssertEqual(c.messages.last?.text, "interrupted")
+    }
+    func testCompletionBetweenHistoryPageAndResumeIsNotLost() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "finish while reconnecting"
+        await store.send()
+        let c = try XCTUnwrap(store.current)
+        _ = try await fixture(["action": .string("configure"), "complete_on_resume": .bool(true)])
+        await store.connect()
+        try await eventually { c.messages.last?.text == "finished during resume" }
+        XCTAssertEqual(c.messages.map(\.text), ["finish while reconnecting", "finished during resume"])
+        XCTAssertFalse(c.generating)
+        XCTAssertFalse(c.uncertain)
+        XCTAssertTrue(store.connected)
     }
     func testNativeTokenRefreshAndWebSocketTicket() async throws {
         guard !address.isEmpty else { throw XCTSkip("Run script/test.sh to enable protocol integration tests") }

@@ -94,7 +94,7 @@ struct ChatView: View {
             }
 
             // Main Conversation or Empty State
-            if let c = store.current, (!c.messages.isEmpty || !c.tools.isEmpty || c.generating) {
+            if let c = store.current, (!c.messages.isEmpty || !c.tools.isEmpty || c.generating || c.loading || c.hasOlder || c.readOnlyReason != nil || c.error != nil) {
                 conversationView(c)
             } else {
                 emptyStateView
@@ -271,12 +271,6 @@ struct ChatView: View {
                             .padding(.top, 8)
                         }
 
-                        if c.loading {
-                            ProgressView()
-                                .controlSize(.small)
-                                .frame(maxWidth: .infinity)
-                        }
-
                         ForEach(c.messages) { message in
                             MessageRowView(
                                 message: message,
@@ -340,13 +334,23 @@ struct ChatView: View {
                     .frame(maxWidth: 860)
                     .frame(maxWidth: .infinity)
                 }
+                .overlay(alignment: .top) {
+                    if c.loading {
+                        ProgressView()
+                            .controlSize(.small)
+                            .padding(8)
+                            .background(.regularMaterial, in: Capsule())
+                            .padding(.top, 8)
+                            .allowsHitTesting(false)
+                    }
+                }
                 .onChange(of: c.messages.count) { _, _ in
-                    if c.generating {
+                    if c.generating && !c.loading {
                         proxy.scrollTo("bottom", anchor: .bottom)
                     }
                 }
                 .onChange(of: c.approvals.count) { _, _ in
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                    if !c.loading { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
             }
         }
@@ -400,10 +404,10 @@ private struct MessageRowView: View {
 
                 VStack(alignment: .trailing, spacing: 4) {
                     HStack(spacing: 6) {
-                        if isHovered {
-                            CopyButton(text: message.text, labelText: "复制")
-                                .transition(.opacity)
-                        }
+                        CopyButton(text: message.text, labelText: "复制")
+                            .opacity(isHovered ? 1 : 0)
+                            .allowsHitTesting(isHovered)
+                            .accessibilityHidden(!isHovered)
                         Text("你")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
@@ -448,10 +452,10 @@ private struct MessageRowView: View {
 
                         Spacer()
 
-                        if isHovered {
-                            CopyButton(text: message.text, labelText: "复制回答")
-                                .transition(.opacity)
-                        }
+                        CopyButton(text: message.text, labelText: "复制回答")
+                            .opacity(isHovered ? 1 : 0)
+                            .allowsHitTesting(isHovered)
+                            .accessibilityHidden(!isHovered)
                     }
 
                     MarkdownView(text: message.text)

@@ -19,13 +19,22 @@ import XCTest
         try await client.connect()
         let profiles = try await client.rest("/api/profiles")["profiles"].array
         XCTAssertFalse(profiles.isEmpty)
-        let first = try XCTUnwrap(profiles.first?["name"].string)
+        let first = try XCTUnwrap(env["HERMES_LIVE_PROFILE"] ?? profiles.first?["name"].string)
         let list = try await client.rest("/api/sessions", query: [URLQueryItem(name: "profile", value: first), URLQueryItem(name: "limit", value: "5")])
-        if let row = list["sessions"].array.first {
-            let history = try await client.rest("/api/sessions/\(row["id"].string)/messages", query: [URLQueryItem(name: "profile", value: first), URLQueryItem(name: "limit", value: "5")])
+        let storedID = env["HERMES_LIVE_STORED_SESSION"] ?? list["sessions"].array.first?["id"].string
+        if let storedID {
+            let history = try await client.rest("/api/sessions/\(storedID)/messages", query: [
+                URLQueryItem(name: "profile", value: first), URLQueryItem(name: "limit", value: "20"),
+                URLQueryItem(name: "order", value: "latest"), URLQueryItem(name: "inline_images", value: "false")
+            ])
             XCTAssertNotEqual(history["messages"], .null)
-            let resumed = try await client.request("session.resume", ["profile": .string(first), "session_id": row["id"]])
+            XCTAssertLessThanOrEqual(history["messages"].array.count, 20)
+            let resumed = try await client.request("session.resume", ["profile": .string(first), "session_id": .string(storedID), "omit_messages": .bool(true)])
             XCTAssertFalse(resumed["session_id"].string.isEmpty)
+            XCTAssertTrue(resumed["messages"].array.isEmpty)
+            try await Task.sleep(for: .seconds(6))
+            _ = try await client.request("client.capabilities", ["server_requests": .bool(true)])
+            XCTAssertTrue(client.isConnected)
         }
         guard env["HERMES_LIVE_CHAT"] == "1" else { return }
         let defaultsName = "HermesMacLive-" + UUID().uuidString

@@ -145,8 +145,14 @@ public struct CopyButton: View {
             HStack(spacing: 4) {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                     .font(.system(size: 10, weight: .medium))
-                Text(copied ? "已复制" : labelText)
-                    .font(.system(size: 11, weight: .medium))
+                    .frame(width: 12)
+                // Reserve both labels so the copy confirmation cannot resize the row.
+                ZStack {
+                    Text(labelText).hidden().accessibilityHidden(true)
+                    Text("已复制").hidden().accessibilityHidden(true)
+                    Text(copied ? "已复制" : labelText)
+                }
+                .font(.system(size: 11, weight: .medium))
             }
             .foregroundStyle(copied ? Color.green : (isDark ? Color(red: 0.75, green: 0.80, blue: 0.88) : Color.secondary))
             .padding(.horizontal, 7)

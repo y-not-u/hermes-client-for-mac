@@ -15,17 +15,22 @@ import Observation
     var loading = false
     var loadingEpoch: UUID?
     var receivedAfter: Double = 0
+    var historyReadAfter: Double = 0
     var historyBacklog: [Message] = []
     var historyOffset = 0
     var hasOlder = false
     private var streamID: String?
     init(key: ConversationKey) { self.key = key }
-    func snapshot(_ json: JSON) {
+    func snapshot(_ json: JSON, history: [Message]? = nil) {
         let previousMessages = messages
         let wasUncertain = uncertain
         runtimeID = json["session_id"].string
         receivedAfter = json["_responseOrdinal"].number
-        messages = json["messages"].array.map(Message.init).filter { !$0.text.isEmpty && $0.role != "system" }
+        // A metadata-only resume must not erase the visible transcript. Its inflight
+        // snapshot replaces the previous partial assistant rather than appending it twice.
+        messages = history ?? (json["messages_omitted"].bool
+            ? previousMessages.filter { $0.id != streamID || json["inflight"]["assistant"].string.isEmpty }
+            : Message.visibleHistory(json["messages"].array))
         approvals = []; streamID = nil
         generating = json["running"].bool || json["inflight"]["streaming"].bool
         uncertain = false; readOnlyReason = nil
@@ -63,7 +68,9 @@ import Observation
             let text = payload["text"].string
             if !text.isEmpty && !payload["response_reused"].bool {
                 if let streamID, let i = messages.firstIndex(where: { $0.id == streamID }) { messages[i].text = text }
-                else { messages.append(Message(role: "assistant", text: text)) }
+                else if messages.last?.role != "assistant" || messages.last?.text != text {
+                    messages.append(Message(role: "assistant", text: text))
+                }
             }
             streamID = nil; generating = false; uncertain = false; unread = !visible
             approvals = []; error = payload["error"].string.isEmpty ? nil : payload["error"].string

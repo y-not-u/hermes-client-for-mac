@@ -30,6 +30,7 @@ import Observation
     private var searchTask: Task<Void, Never>?
     private var listRevision: [String: UUID] = [:]
     private var busyProfiles: Set<String> = []
+    private let historyPageSize = 20
     init(local: LocalState? = nil, makeClient: ((String) throws -> HermesClient)? = nil) { let state = local ?? LocalState(); self.local = state; address = state.address; self.makeClient = makeClient ?? { try HermesClient(address: $0) } }
     var service: String { client?.service ?? address }
     var currentKey: ConversationKey? { selectedSession.map { ConversationKey(service: service, profile: selectedProfile, storedID: $0) } }
@@ -179,10 +180,28 @@ import Observation
         guard !(c.loading && c.loadingEpoch == epoch), c.readOnlyReason != "此 profile 已被删除" else { return }
         c.loading = true; c.loadingEpoch = epoch
         defer { if c.loadingEpoch == epoch { c.loading = false; c.loadingEpoch = nil } }
+        // Fetch a bounded display page over HTTP, never the full model/tool history
+        // over WebSocket. Read it before resume so the newer inflight snapshot wins.
+        var history: [Message]?
+        var historyError: String?
+        c.historyReadAfter = client.receivedOrdinal
         do {
-            let snapshot = try await client.request("session.resume", ["profile": .string(c.key.profile), "session_id": .string(c.key.storedID), "omit_messages": .bool(false)])
+            let result = try await historyPage(c, client: client)
             guard epoch == generation else { return }
-            c.snapshot(snapshot); c.historyOffset = c.messages.count + c.historyBacklog.count; c.hasOlder = !c.historyBacklog.isEmpty
+            let rows = result["messages"].array
+            history = Message.visibleHistory(rows)
+            c.historyOffset = rows.count
+            c.hasOlder = rows.count == historyPageSize
+            c.historyBacklog = []
+        } catch {
+            guard epoch == generation else { return }
+            historyError = "历史消息加载失败：\(error.localizedDescription)"
+        }
+        do {
+            let snapshot = try await client.request("session.resume", ["profile": .string(c.key.profile), "session_id": .string(c.key.storedID), "omit_messages": .bool(true)])
+            guard epoch == generation else { return }
+            c.snapshot(snapshot, history: history)
+            if let historyError, c.error == nil { c.error = historyError }
             bind(c)
             for request in snapshot["open_requests"].array where request["method"].string != "approval" {
                 try? await client.respond(id: request["id"].string)
@@ -191,14 +210,18 @@ import Observation
             guard epoch == generation else { return }
             c.runtimeID = nil; c.generating = false; c.uncertain = false; c.approvals = []
             c.readOnlyReason = "历史暂无法恢复，当前为只读：\(error.localizedDescription)"
-            if c.messages.isEmpty {
-                do {
-                    let result = try await client.rest("/api/sessions/\(c.key.storedID)/messages", query: [URLQueryItem(name: "profile", value: c.key.profile), URLQueryItem(name: "limit", value: "100"), URLQueryItem(name: "order", value: "latest")])
-                    guard epoch == generation else { return }
-                    c.messages = result["messages"].array.map(Message.init).filter { $0.role != "system" && !$0.text.isEmpty }; c.historyOffset = result["messages"].array.count; c.hasOlder = c.historyOffset == 100
-                } catch { c.error = error.localizedDescription }
-            }
+            if c.messages.isEmpty, let history { c.messages = history }
+            if let historyError { c.error = historyError }
         }
+    }
+    private func historyPage(_ c: Conversation, client: HermesClient, offset: Int = 0) async throws -> JSON {
+        try await client.rest("/api/sessions/\(c.key.storedID)/messages", query: [
+            URLQueryItem(name: "profile", value: c.key.profile),
+            URLQueryItem(name: "limit", value: String(historyPageSize)),
+            URLQueryItem(name: "offset", value: String(offset)),
+            URLQueryItem(name: "order", value: "latest"),
+            URLQueryItem(name: "inline_images", value: "false")
+        ])
     }
     func loadOlder(_ c: Conversation) async {
         guard let client, c.key.service == client.service, conversations[c.key] === c, !c.loading else { return }
@@ -208,11 +231,11 @@ import Observation
         }
         c.loading = true; defer { c.loading = false }; let epoch = generation
         do {
-            let result = try await client.rest("/api/sessions/\(c.key.storedID)/messages", query: [URLQueryItem(name: "profile", value: c.key.profile), URLQueryItem(name: "limit", value: "100"), URLQueryItem(name: "offset", value: String(c.historyOffset)), URLQueryItem(name: "order", value: "latest")])
+            let result = try await historyPage(c, client: client, offset: c.historyOffset)
             guard epoch == generation else { return }
-            let rows = result["messages"].array; c.historyOffset += rows.count; c.hasOlder = rows.count == 100
+            let rows = result["messages"].array; c.historyOffset += rows.count; c.hasOlder = rows.count == historyPageSize
             let existing = Set(c.messages.map(\.id))
-            c.messages.insert(contentsOf: rows.map(Message.init).filter { $0.role != "system" && !$0.text.isEmpty && !existing.contains($0.id) }, at: 0)
+            c.messages.insert(contentsOf: Message.visibleHistory(rows).filter { !existing.contains($0.id) }, at: 0)
         } catch { c.error = error.localizedDescription }
     }
     func retryResume() async { if let c = current, let client { c.readOnlyReason = nil; await resume(c, client: client, epoch: generation) } }
@@ -300,7 +323,7 @@ import Observation
             // for stream text/requests, but a tool event emitted during snapshot construction
             // can arrive before its response; retain these independent tool records.
             let type = params["type"].string
-            if type == "tool.start" || type == "tool.complete" || (type == "message.complete" && c.generating) {
+            if type == "tool.start" || type == "tool.complete" || (type == "message.complete" && (c.generating || frame["_receivedOrdinal"].number > c.historyReadAfter)) {
                 c.apply(type: type, payload: params["payload"], visible: currentKey == key)
             }
             return

@@ -59,6 +59,13 @@ struct Message: Identifiable, Equatable {
         let content = json["display_content"] == .null ? json["content"] : json["display_content"]
         text = content.string.isEmpty ? (content.array.isEmpty ? json["text"].string : content.array.map { $0["text"].string }.joined()) : content.string
     }
+    static func visibleHistory(_ rows: [JSON]) -> [Message] {
+        rows.filter {
+            $0["display_kind"].string != "hidden" && ($0["role"].string == "user" || $0["role"].string == "assistant")
+        }
+            .map(Message.init)
+            .filter { !$0.text.isEmpty }
+    }
 }
 struct ToolCall: Identifiable { let id: String; let name: String; var details: String; var complete = false }
 struct Approval: Identifiable { let id: String; let params: JSON }

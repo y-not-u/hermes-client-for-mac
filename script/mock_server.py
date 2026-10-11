@@ -13,12 +13,14 @@ class Fixture:
     def reset(self):
         self.sessions = {}
         self.requests = []
+        self.history_reads = []
         self.responses = []
         self.counter = 0
         self.native = False
         self.create_delay = 0
         self.refreshes = 0
         self.tickets = 0
+        self.complete_on_resume = False
 
     async def control(self, request):
         body = await request.json()
@@ -30,6 +32,14 @@ class Fixture:
         elif action == 'configure':
             self.native = body.get('native', self.native)
             self.create_delay = body.get('create_delay', self.create_delay)
+            self.complete_on_resume = body.get('complete_on_resume', self.complete_on_resume)
+            if body.get('large_history'):
+                self.sessions['large-history'] = {
+                    'stored_session_id': 'large-history', 'session_id': 'runtime-large',
+                    'profile': 'a', 'running': False,
+                    'messages': [{'_row_id': 1, 'role': 'tool', 'content': 'x' * 2_000_000}] + [
+                        {'_row_id': i + 2, 'role': 'tool' if i % 3 == 0 else ('user' if i % 3 == 1 else 'assistant'),
+                         'content': f'message-{i}'} for i in range(65)]}
         elif action == 'drop':
             for ws in list(self.sockets):
                 await ws.close()
@@ -50,7 +60,7 @@ class Fixture:
                     session['messages'].append({'role': 'assistant', 'content': text})
             for ws in list(self.sockets):
                 await ws.send_json(frame)
-        return web.json_response({'requests': self.requests, 'responses': self.responses,
+        return web.json_response({'requests': self.requests, 'responses': self.responses, 'history_reads': self.history_reads,
             'refreshes': self.refreshes, 'tickets': self.tickets})
 
     async def rest(self, request):
@@ -78,7 +88,15 @@ class Fixture:
             return web.json_response({'results' if path.endswith('search') else 'sessions': rows})
         if path.endswith('/messages'):
             sid = request.match_info['sid']
+            self.history_reads.append({'session_id': sid, **dict(request.query)})
             messages = [{'role': 'user', 'content': 'CLI question'}, {'role': 'assistant', 'content': 'CLI answer'}] if sid == 'cli-readonly' else self.sessions[sid]['messages']
+            limit = int(request.query.get('limit', 20))
+            offset = int(request.query.get('offset', 0))
+            if request.query.get('order') == 'latest':
+                end = max(0, len(messages) - offset)
+                messages = messages[max(0, end - limit):end]
+            else:
+                messages = messages[offset:offset + limit]
             return web.json_response({'messages': messages})
         return web.json_response({'ok': True})
 
@@ -102,7 +120,20 @@ class Fixture:
             if sid == 'cli-readonly':
                 await ws.send_json({'jsonrpc': '2.0', 'id': frame['id'], 'error': {'code': -32000, 'message': 'history cannot be resumed'}})
                 return
-            result = self.sessions[sid]
+            if self.complete_on_resume:
+                self.complete_on_resume = False
+                session = self.sessions[sid]
+                session['running'] = False
+                session.pop('inflight', None)
+                session['messages'].append({'role': 'assistant', 'content': 'finished during resume'})
+                await ws.send_json({'jsonrpc': '2.0', 'method': 'event', 'params': {
+                    'session_id': session['session_id'], 'type': 'message.complete',
+                    'payload': {'text': 'finished during resume'}}})
+            result = dict(self.sessions[sid])
+            if params.get('omit_messages'):
+                result['message_count'] = len(result['messages'])
+                result['messages'] = []
+                result['messages_omitted'] = True
         elif method == 'prompt.submit':
             result = {'accepted': True}
             session = next(s for s in self.sessions.values() if s['session_id'] == params['session_id'])

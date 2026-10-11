@@ -42,4 +42,18 @@ import XCTest
         XCTAssertTrue(c.generating)
         XCTAssertEqual(c.approvals.map(\.id), ["approval"])
     }
+    func testMetadataOnlySnapshotPreservesHistoryAndReplacesPartialStream() {
+        let c = Conversation(key: ConversationKey(service: "local", profile: "a", storedID: "stored"))
+        c.begin("question")
+        c.appendStream("partial")
+        c.snapshot(.object([
+            "session_id": .string("runtime"), "messages_omitted": .bool(true), "running": .bool(true),
+            "inflight": .object(["user": .string("question"), "assistant": .string("partial restored")])
+        ]))
+        XCTAssertEqual(c.messages.map(\.text), ["question", "partial restored"])
+        c.snapshot(.object(["session_id": .string("runtime"), "messages_omitted": .bool(true)]))
+        XCTAssertEqual(c.messages.map(\.text), ["question", "partial restored"])
+        c.apply(type: "message.complete", payload: .object(["text": .string("partial restored")]), visible: true)
+        XCTAssertEqual(c.messages.count, 2)
+    }
 }

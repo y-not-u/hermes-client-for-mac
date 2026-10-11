@@ -15,6 +15,7 @@ import Foundation
     var onFrame: ((JSON) -> Void)?
     var onDisconnect: ((Error) -> Void)?
     var isConnected: Bool { socket != nil }
+    var receivedOrdinal: Double { ordinal }
 
     init(address: String, credentials: Credentials? = nil, session: URLSession? = nil) throws {
         guard var parts = URLComponents(string: address.trimmingCharacters(in: .whitespacesAndNewlines)), ["http", "https"].contains(parts.scheme?.lowercased() ?? ""), parts.host != nil, parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil else {
