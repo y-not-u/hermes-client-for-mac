@@ -17,7 +17,7 @@ permissions:
 jobs:
   build:
     name: Build macOS Application
-    runs-on: macos-14
+    runs-on: macos-15-intel
 
     steps:
       - name: Checkout repository
@@ -38,10 +38,16 @@ jobs:
             -scheme HermesMac \
             -configuration Release \
             -derivedDataPath build \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY=- \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
             build
+
+      - name: Verify Application
+        run: |
+          codesign --verify --strict --verbose=2 build/Build/Products/Release/HermesMac.app
+          lipo build/Build/Products/Release/HermesMac.app/Contents/MacOS/HermesMac -verify_arch arm64 x86_64
 
       - name: Package HermesMac.app
         run: |

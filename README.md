@@ -9,10 +9,15 @@ macOS 14+ 原生 SwiftUI 客户端，用一个连接访问本机或局域网 Lin
 安装 Xcode（含 macOS SDK），并让 `xcode-select -p` 指向完整 Xcode。客户端没有第三方 Swift 依赖。
 
 ```sh
+./script/setup_local_signing.sh # 本机首次运行，创建固定签名证书
 ./script/build_and_run.sh --build
 ./script/build_and_run.sh
 ./script/test.sh
 ```
+
+本机 Debug 构建默认使用钥匙串中的 `HermesMac Local Development` 自签名证书，无需 Apple 开发者账号。首次设置证书或使用私钥时，系统可能要求授权；首次从旧的临时签名切换后，读取已有登录凭据也可能需要再次选择“始终允许”。保留同一证书及私钥，之后重新编译保持相同的应用身份。不要每次重建证书。可用 `HERMES_SIGNING_IDENTITY="证书名称"` 指定其他签名，或 `HERMES_SIGNING_IDENTITY=-` 临时构建（可能重复请求 Keychain 授权）。直接在 Xcode 中运行 Debug 也使用该本地证书。
+
+GitHub Actions 在 push 到 `main`、向 `main` 提交 PR 或手动触发时运行模拟测试，构建 Release 的 Apple Silicon / Intel 通用应用，并上传 `HermesMac.zip` 与 SHA-256 校验文件。推送 `v*` tag 还会创建 GitHub Release。CI 使用临时签名，不需要开发者账号、证书或 Secrets；它未做 Developer ID 签名和公证，下载后首次运行可能需要在系统设置的“隐私与安全性”中允许打开。不同 CI 构建的签名身份会变化，升级时可能再次请求 Keychain 授权。
 
 构建产物在 `DerivedData/Build/Products/Debug/HermesMac.app`，构建日志在 `/tmp/hermes-mac-build.log`。运行脚本会先关闭现有 HermesMac 进程。`--verify` 检查启动进程，`--debug` 启动 LLDB，`--logs` / `--telemetry` 查看日志。新增 Swift 文件后运行 `python3 script/generate_project.py` 更新 Xcode 工程。测试使用 SwiftPM 和本地 aiohttp 模拟服务；需要 Python 3，脚本会在 `/tmp/hermes-mac-test-venv` 自动安装 aiohttp 3.13.3（首次需要网络），可用 `HERMES_TEST_VENV` 更改测试环境路径。
 
