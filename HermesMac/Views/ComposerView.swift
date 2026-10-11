@@ -3,50 +3,235 @@ import AppKit
 
 struct ComposerView: View {
     @Bindable var store: AppStore
+
+    private var isEnabled: Bool {
+        store.connected && store.current?.readOnlyReason == nil
+    }
+
     var body: some View {
         VStack(spacing: 8) {
-            ComposerTextView(text: $store.draft, enabled: store.connected && store.current?.readOnlyReason == nil) { store.submitDraft() }
-                .frame(minHeight: 60, maxHeight: 130)
-            HStack {
-                Text("Enter 发送 · Shift+Enter 换行").font(.caption).foregroundStyle(.tertiary)
-                Spacer()
-                if store.current?.generating == true {
-                    Button("停止", systemImage: "stop.fill") { store.stopCurrent() }.disabled(!store.connected)
+            // Quick Command Chips
+            if store.draft.isEmpty && isEnabled {
+                HStack(spacing: 8) {
+                    QuickChip(title: "/status", description: "状态") {
+                        store.draft = "/status"
+                        store.submitDraft()
+                    }
+                    QuickChip(title: "/model", description: "模型") {
+                        store.draft = "/model"
+                        store.submitDraft()
+                    }
+                    QuickChip(title: "/profile", description: "角色") {
+                        store.draft = "/profile"
+                        store.submitDraft()
+                    }
+                    Spacer()
                 }
-                Button("发送", systemImage: "arrow.up") { store.submitDraft() }.buttonStyle(.borderedProminent).disabled(!store.canSend)
+                .padding(.horizontal, 2)
             }
-        }.padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)).padding(20)
+
+            // Input Card
+            VStack(spacing: 6) {
+                ZStack(alignment: .topLeading) {
+                    if store.draft.isEmpty {
+                        Text(isEnabled ? "向 \(store.profileTitle) 发送消息… (Enter 发送)" : "当前连接不可用或处于只读状态")
+                            .font(.system(size: 13.5))
+                            .foregroundStyle(Color(nsColor: .placeholderTextColor))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 8)
+                            .allowsHitTesting(false)
+                    }
+
+                    ComposerTextView(text: $store.draft, enabled: isEnabled) {
+                        store.submitDraft()
+                    }
+                    .frame(minHeight: 38, maxHeight: 120)
+                }
+
+                // Bottom toolbar inside card
+                HStack(alignment: .center) {
+                    HStack(spacing: 5) {
+                        KeyCap("Enter")
+                        Text("发送")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+
+                        Text("·")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+
+                        HStack(spacing: 2) {
+                            KeyCap("Shift")
+                            Text("+")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.tertiary)
+                            KeyCap("Enter")
+                        }
+                        Text("换行")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    Spacer()
+
+                    if !store.draft.isEmpty {
+                        Button {
+                            store.draft = ""
+                        } label: {
+                            Image(systemName: "xmark.circle")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("清空输入")
+                    }
+
+                    if store.current?.generating == true {
+                        Button {
+                            store.stopCurrent()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "stop.fill")
+                                    .font(.system(size: 9))
+                                Text("停止")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.red.opacity(0.12), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!store.connected)
+                        .help("停止当前生成")
+                    }
+
+                    Button {
+                        store.submitDraft()
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .fill(store.canSend ? Color.accentColor : Color.secondary.opacity(0.15))
+                                .frame(width: 28, height: 28)
+                                .shadow(color: store.canSend ? Color.accentColor.opacity(0.35) : Color.clear, radius: 3, y: 1.5)
+
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(store.canSend ? Color.white : Color.secondary.opacity(0.6))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!store.canSend)
+                    .help(store.canSend ? "发送消息 (Enter)" : "无法发送")
+                }
+            }
+            .padding(10)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .strokeBorder(
+                        !store.draft.isEmpty ? Color.accentColor.opacity(0.4) : Color(nsColor: .separatorColor).opacity(0.55),
+                        lineWidth: 1
+                    )
+            }
+            .shadow(color: Color.black.opacity(0.04), radius: 6, y: 2)
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 16)
+        .padding(.top, 4)
     }
 }
+
+private struct QuickChip: View {
+    let title: String
+    let description: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color.accentColor)
+
+                Text(description)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3.5)
+            .background(
+                isHovered ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.06),
+                in: Capsule()
+            )
+            .overlay {
+                Capsule()
+                    .strokeBorder(isHovered ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 0.8)
+            }
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+}
+
 struct ComposerTextView: NSViewRepresentable {
     @Binding var text: String
     let enabled: Bool
     let onSubmit: () -> Void
+
     func makeCoordinator() -> Coordinator { Coordinator(self) }
+
     func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.drawsBackground = false
-        let view = SubmitTextView(); view.isRichText = false; view.drawsBackground = false; view.font = .systemFont(ofSize: 14)
-        view.textContainerInset = NSSize(width: 4, height: 6); view.isVerticallyResizable = true; view.isHorizontallyResizable = false
-        view.autoresizingMask = [.width]; view.textContainer?.widthTracksTextView = true
-        view.delegate = context.coordinator; view.onSubmit = onSubmit; scroll.documentView = view; return scroll
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+
+        let view = SubmitTextView()
+        view.isRichText = false
+        view.drawsBackground = false
+        view.font = .systemFont(ofSize: 13.5)
+        view.textContainerInset = NSSize(width: 4, height: 6)
+        view.isVerticallyResizable = true
+        view.isHorizontallyResizable = false
+        view.autoresizingMask = [.width]
+        view.textContainer?.widthTracksTextView = true
+        view.delegate = context.coordinator
+        view.onSubmit = onSubmit
+        scroll.documentView = view
+        return scroll
     }
+
     func updateNSView(_ view: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let editor = view.documentView as? SubmitTextView else { return }
         // Never replace marked text while an IME owns the composition.
-        if editor.string != text && !editor.hasMarkedText() { editor.string = text }
-        editor.isEditable = enabled; editor.onSubmit = onSubmit
+        if editor.string != text && !editor.hasMarkedText() {
+            editor.string = text
+        }
+        editor.isEditable = enabled
+        editor.onSubmit = onSubmit
     }
+
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ComposerTextView
         init(_ parent: ComposerTextView) { self.parent = parent }
-        func textDidChange(_ notification: Notification) { if let editor = notification.object as? NSTextView { parent.text = editor.string } }
+        func textDidChange(_ notification: Notification) {
+            if let editor = notification.object as? NSTextView {
+                parent.text = editor.string
+            }
+        }
     }
 }
+
 final class SubmitTextView: NSTextView {
     var onSubmit: (() -> Void)?
     override func keyDown(with event: NSEvent) {
-        if (event.keyCode == 36 || event.keyCode == 76) && !event.modifierFlags.contains(.shift) && !hasMarkedText() { onSubmit?(); return }
+        if (event.keyCode == 36 || event.keyCode == 76) && !event.modifierFlags.contains(.shift) && !hasMarkedText() {
+            onSubmit?()
+            return
+        }
         super.keyDown(with: event)
     }
 }

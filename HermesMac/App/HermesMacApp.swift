@@ -6,7 +6,7 @@ import AppKit
     @State private var store = AppStore()
     var body: some Scene {
         WindowGroup("Hermes", id: "main") {
-            ContentView(store: store).frame(minWidth: 760, minHeight: 520)
+            ContentView(store: store).frame(minWidth: 800, minHeight: 540)
                 .task { if !store.connected && !store.connecting { await store.connect() } }
         }
         .defaultSize(width: 1120, height: 760)

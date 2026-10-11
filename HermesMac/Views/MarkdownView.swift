@@ -1,51 +1,169 @@
 import SwiftUI
 import AppKit
+
 struct MarkdownView: View {
     let text: String
+
     private var segments: [Segment] {
-        var result: [Segment] = []; var body = ""; var code = false; var language = ""
+        var result: [Segment] = []
+        var body = ""
+        var code = false
+        var language = ""
+
         for line in text.components(separatedBy: "\n") {
             if line.hasPrefix("```") {
-                if !body.isEmpty { result.append(Segment(text: body, code: code, language: language)); body = "" }
-                code.toggle(); language = code ? String(line.dropFirst(3)) : ""
-            } else { body += (body.isEmpty ? "" : "\n") + line }
+                if !body.isEmpty {
+                    result.append(Segment(text: body, code: code, language: language))
+                    body = ""
+                }
+                code.toggle()
+                language = code ? String(line.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines) : ""
+            } else {
+                body += (body.isEmpty ? "" : "\n") + line
+            }
         }
-        if !body.isEmpty { result.append(Segment(text: body, code: code, language: language)) }; return result
+        if !body.isEmpty {
+            result.append(Segment(text: body, code: code, language: language))
+        }
+        return result
     }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                 if segment.code {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack { Text(segment.language.isEmpty ? "代码" : segment.language).font(.caption).foregroundStyle(.secondary); Spacer(); Button("复制", systemImage: "doc.on.doc") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(segment.text, forType: .string) }.buttonStyle(.borderless).font(.caption) }
-                        ScrollView(.horizontal) { Text(segment.text).font(.system(.body, design: .monospaced)).textSelection(.enabled).fixedSize(horizontal: true, vertical: false) }
-                    }.padding(12).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+                    CodeBlockView(code: segment.text, language: segment.language)
                 } else {
-                    MarkdownTextBlock(text: segment.text).textSelection(.enabled)
+                    MarkdownTextBlock(text: segment.text)
+                        .textSelection(.enabled)
                 }
             }
         }
     }
-    private struct Segment { let text: String; let code: Bool; let language: String }
+
+    private struct Segment {
+        let text: String
+        let code: Bool
+        let language: String
+    }
 }
 
-/// Block layout stays native SwiftUI; inline emphasis, links and inline code use Foundation Markdown.
+// MARK: - Modern Developer Code Block
+
+private struct CodeBlockView: View {
+    let code: String
+    let language: String
+
+    var displayLanguage: String {
+        let trimmed = language.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "CODE" : trimmed.uppercased()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header bar
+            HStack {
+                HStack(spacing: 5) {
+                    Image(systemName: "chevron.left.forwardslash.chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color(red: 0.65, green: 0.70, blue: 0.78))
+
+                    Text(displayLanguage)
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Color(red: 0.75, green: 0.80, blue: 0.88))
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+
+                Spacer()
+
+                CopyButton(text: code, labelText: "复制", isDark: true)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color(red: 0.15, green: 0.16, blue: 0.19))
+
+            // Code Content
+            ScrollView(.horizontal, showsIndicators: true) {
+                Text(code)
+                    .font(.system(size: 12.5, design: .monospaced))
+                    .lineSpacing(3.5)
+                    .foregroundStyle(Color(red: 0.92, green: 0.94, blue: 0.96))
+                    .padding(12)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .textSelection(.enabled)
+            }
+            .background(Color(red: 0.10, green: 0.11, blue: 0.13))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.1), lineWidth: 0.8)
+        }
+        .shadow(color: Color.black.opacity(0.12), radius: 3, y: 1.5)
+    }
+}
+
+// MARK: - Markdown Text Block
+
 private struct MarkdownTextBlock: View {
     let text: String
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(text.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
-                if line.hasPrefix("### ") { inline(String(line.dropFirst(4))).font(.headline).padding(.top, 6) }
-                else if line.hasPrefix("## ") { inline(String(line.dropFirst(3))).font(.title3.weight(.semibold)).padding(.top, 8) }
-                else if line.hasPrefix("# ") { inline(String(line.dropFirst(2))).font(.title2.weight(.semibold)).padding(.top, 10) }
-                else if line.hasPrefix("- ") || line.hasPrefix("* ") { HStack(alignment: .top, spacing: 8) { Text("•"); inline(String(line.dropFirst(2))) }.padding(.leading, 8) }
-                else if line.hasPrefix("> ") { HStack(alignment: .top, spacing: 10) { Rectangle().fill(.tertiary).frame(width: 3); inline(String(line.dropFirst(2))).foregroundStyle(.secondary) }.fixedSize(horizontal: false, vertical: true) }
-                else if line == "---" || line == "***" { Divider().padding(.vertical, 6) }
-                else if line.isEmpty { Color.clear.frame(height: 4) }
-                else { inline(line) }
+                if line.hasPrefix("### ") {
+                    inline(String(line.dropFirst(4)))
+                        .font(.system(size: 14, weight: .bold))
+                        .padding(.top, 6)
+                } else if line.hasPrefix("## ") {
+                    inline(String(line.dropFirst(3)))
+                        .font(.system(size: 16, weight: .bold))
+                        .padding(.top, 8)
+                } else if line.hasPrefix("# ") {
+                    inline(String(line.dropFirst(2)))
+                        .font(.system(size: 18, weight: .bold))
+                        .padding(.top, 10)
+                } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
+                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                        Circle()
+                            .fill(Color.primary.opacity(0.6))
+                            .frame(width: 4.5, height: 4.5)
+                            .offset(y: -1)
+                        inline(String(line.dropFirst(2)))
+                            .font(.system(size: 13.5))
+                    }
+                    .padding(.leading, 8)
+                } else if line.hasPrefix("> ") {
+                    HStack(alignment: .top, spacing: 10) {
+                        Capsule()
+                            .fill(Color.accentColor.opacity(0.7))
+                            .frame(width: 3)
+                        inline(String(line.dropFirst(2)))
+                            .font(.system(size: 13.5))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 3)
+                    .padding(.horizontal, 6)
+                    .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                } else if line == "---" || line == "***" {
+                    Rectangle()
+                        .fill(Color(nsColor: .separatorColor).opacity(0.5))
+                        .frame(height: 1)
+                        .padding(.vertical, 6)
+                } else if line.isEmpty {
+                    Color.clear.frame(height: 4)
+                } else {
+                    inline(line)
+                        .font(.system(size: 13.5))
+                        .lineSpacing(2.5)
+                }
             }
-        }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
+
     private func inline(_ value: String) -> Text {
         Text((try? AttributedString(markdown: value, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(value))
     }
