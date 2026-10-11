@@ -1,0 +1,53 @@
+# 验证与人工验收
+
+## 证据分层
+
+2026-10-11 验证记录：`script/test.sh` 的 10 项本地模拟测试通过；10:04:42（Asia/Singapore）真实服务的 `LiveConnectionTests` 1 项测试通过。另有官方固定 revision 源码契约对照和 macOS 构建/启动验证。mock 使用 aiohttp，真实测试使用用户提供的局域网服务；两者的证据分开记录。
+
+真实服务广告 Hermes 0.21.5、`native_pkce` 和 4 个 profiles。已通过 native PKCE broker、loopback 回调、token 交换与 Keychain 保存、WebSocket ticket、profile 加载、历史读取与恢复、两个 profiles 并行真实 A/B marker 回复、草稿隔离、后台未读、重命名及重连恢复。用户确认系统浏览器登录成功；独立 live test 中 broker 登录表单由 HTTP 辅助完成，因此不称完整 UI 自动化。macOS 本地网络权限已开启，构建的 Info.plist 本地网络配置已验证。
+
+服务仅返回版本号，未报告 git SHA，不能称参考 revision `c57331677d7fc46298a7159cf3a650853f0966c5` 已实机验证。真实工具审批、中断、断网、服务重启、token 到期及中文输入法尚未完整实测；仍需下面的人工清单。文档不记录真实服务地址、密码或令牌。
+
+```sh
+./script/build_and_run.sh --build
+./script/build_and_run.sh --verify
+./script/test.sh
+```
+
+`--verify` 只检查应用启动后进程存在，不代替界面交互检查。`script/test.sh` 不使用真实 Hermes 配置或模型凭据。SwiftPM 是测试入口，Xcode 工程是应用构建入口。
+
+## 可选真实服务测试
+
+只有显式设置服务环境变量才运行 live test。先在应用设置中完成官方登录，下面的常规命令复用该服务在 Keychain 中保存的凭据。聊天模式会在选定服务创建两个测试会话并调用模型，可能产生费用：
+
+```sh
+HERMES_LIVE_SERVER='<自行填写已授权服务地址>' HERMES_LIVE_CHAT=1 swift test --filter LiveConnectionTests
+```
+
+省略 `HERMES_LIVE_CHAT=1` 时只验证已有凭据的连接和读取。测试另提供 `HERMES_LIVE_AUTH_URL_FILE` 辅助入口：指定临时文件时执行新的 PKCE 登录，将授权 URL 写入文件供受控验证工具处理；常规命令无需设置。密码由官方登录页面输入，不传到命令或源码。测试留下标题为 `HermesMac · connection test A` 和 `HermesMac · connection test B` 的两条聊天，保留供核对，不自动删除。再次运行聊天测试会新建会话。
+
+## 可执行清单
+
+记录 macOS/Xcode 版本、Hermes revision、服务运行平台、模型/provider、网络方式、每项结果和复现步骤。先按 [SETUP.md](SETUP.md) 启动本机服务，再在 Linux 重复服务相关项。
+
+- [ ] 设置本机地址与正确 token，可加载 profiles；错误 token 显示认证失败。重启服务并更换 token 后，用新 token 可连接。
+- [ ] Linux 非 loopback 配置官方 basic 或 OAuth provider，状态广告 `native_pkce`。系统浏览器登录返回应用，能加载 profiles。取消登录、错误密码、过期 refresh token 能再次登录。
+- [ ] access token 到期后下一次受保护 REST 操作可刷新；WebSocket 断开重连能重新取得票据。日志、截图和 bug 报告不得附凭据。
+- [ ] 在 CLI 为 A、B 产生历史，应用各自列表仅显示对应 profile。搜索、新建、右键重命名、加载更多和更早消息正确。
+- [ ] 打开 CLI 历史并继续聊天，用户消息与流式答案显示，代码块可横向滚动且复制结果准确；停止按钮只停止当前会话。
+- [ ] A 输入草稿，切 B 输入另一草稿，再切回 A：草稿与最后会话分别恢复。退出重开后继续保持。
+- [ ] A 发送长任务，立即切 B 并发送；两边可以同时生成，同一 profile 生成中不能再次发送。返回 A 时回复完整且未串到 B。
+- [ ] A 在后台触发需要批准的工具，角色栏提示；点击 A 进入相应会话。明确拒绝、批准各试一次，B 的审批与内容不受影响，不自动批准。
+- [ ] A 后台完成显示未读完成提示，查看 A 后清除；B 消息和草稿不变。
+- [ ] 生成中断开网络：已显示内容保留，提示断线/结果未知。恢复网络后查询并恢复任务，客户端不会自动再次提交用户消息。
+- [ ] 重启真实服务，确认后台任务是否仍存在由服务端决定；应用恢复已有历史或显示只读原因。没有重复用户消息或悬空“生成中”状态。
+- [ ] 在 CLI 删除 profile 后重连，列表更新；已打开会话提示该 profile 已删除。不可恢复的历史能阅读但不能发送。
+- [ ] 未知事件不崩溃；未知请求显示不支持，不提交批准。此项可先通过 mock，再用受控服务 fixture 检查。
+- [ ] A 生成时更换服务地址，旧服务任务继续由服务端管理；旧事件不进入新服务，切回原地址能找回草稿。
+- [ ] 中文拼音/五笔等 IME 组词时 Enter 只确认候选；已提交文字后 Enter 发送，Shift+Enter 换行。粘贴多行、长文本和连续切换输入法均无丢字或误发送。
+- [ ] ⌘N、⌘[ / ⌘]、⇧⌘R、⌘, 有效。缩到最小窗口及放大后栏宽、输入框、审批按钮可用；系统深浅色文字与状态可辨认。
+- [ ] 空闲时观察 Activity Monitor 和网络，没有持续高频请求；长输出流式更新可交互，不阻塞角色切换。
+
+不满足项应保留截图/脱敏日志及复现步骤，并标明是客户端、服务能力还是模型/provider 限制。正式分发的签名、公证和升级机制不在当前本地构建验收范围内。
+
+另已通过原生窗口检查：真实服务连接后显示 4 个 profile 与会话列表，打开 `HermesMac · connection test B` 能看到用户消息及 `HERMES_MAC_B_OK` 回复。Keychain 的同步调用已移到后台任务，系统权限等待不阻塞主窗口。真实中文输入法、深色外观和实际危险工具审批仍需人工验收。
