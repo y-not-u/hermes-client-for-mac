@@ -24,7 +24,7 @@ for kind in ['project','target']:
         if kind == 'target':
             settings += 'PRODUCT_NAME = HermesMac; PRODUCT_BUNDLE_IDENTIFIER = com.hermes.mac; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = HermesMac/Info.plist; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity"; CODE_SIGN_STYLE = Automatic; ENABLE_HARDENED_RUNTIME = YES; '
             if config == 'Debug':
-                settings = settings.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual; CODE_SIGN_IDENTITY = "HermesMac Local Development";')
+                settings = settings.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual; CODE_SIGN_IDENTITY = "HermesMac Local Development"; ENABLE_DEBUG_DYLIB = NO;')
         settings += 'SWIFT_OPTIMIZATION_LEVEL = "'+('-Onone' if config == 'Debug' else '-O')+'";'
         obj(kind+config, f'isa = XCBuildConfiguration; name = {config}; buildSettings = {{ {settings} }};')
     obj(kind+'configs', f'isa = XCConfigurationList; buildConfigurations = ({uid(kind+"Debug")},{uid(kind+"Release")}); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;')

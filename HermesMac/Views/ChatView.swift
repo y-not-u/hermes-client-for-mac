@@ -280,12 +280,8 @@ struct ChatView: View {
                             .id(message.id)
                         }
 
-                        ForEach(c.tools) { tool in
-                            ToolCallCard(
-                                title: tool.name,
-                                isComplete: tool.complete,
-                                details: tool.details
-                            )
+                        if !c.tools.isEmpty {
+                            ToolCallGroup(tools: c.tools)
                         }
 
                         ForEach(c.approvals) { approval in
@@ -396,7 +392,7 @@ private struct MessageRowView: View {
 
     var body: some View {
         if message.role == "tool" {
-            ToolCallCard(title: "工具返回", isComplete: true, details: message.text)
+            ToolCallGroup(tools: [ToolCall(id: message.id, name: "工具返回", details: message.text, complete: true)])
         } else if message.role == "user" {
             // User Message: Right Aligned Bubble
             HStack {
@@ -466,9 +462,33 @@ private struct MessageRowView: View {
     }
 }
 
-// MARK: - Modern Tool Call Card
+// MARK: - Tool Calls
 
-private struct ToolCallCard: View {
+private struct ToolCallGroup: View {
+    let tools: [ToolCall]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(tools) { tool in
+                if tool.id != tools.first?.id {
+                    Divider()
+                        .opacity(0.4)
+                        .padding(.horizontal, 12)
+                }
+
+                ToolCallRow(title: tool.name, isComplete: tool.complete, details: tool.details)
+            }
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 0.8)
+        }
+    }
+}
+
+private struct ToolCallRow: View {
     let title: String
     let isComplete: Bool
     let details: String
@@ -538,11 +558,6 @@ private struct ToolCallCard: View {
                     .padding(8)
                 }
             }
-        }
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 0.8)
         }
     }
 }
