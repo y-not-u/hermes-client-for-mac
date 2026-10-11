@@ -1,6 +1,9 @@
 .build/
+build/
 dist/
 DerivedData/
 *.xcuserstate
 xcuserdata/
 .DS_Store
+*.zip
+*.sha256

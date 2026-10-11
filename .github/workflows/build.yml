@@ -1,0 +1,74 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build macOS Application
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run Tests
+        run: |
+          ./script/test.sh
+
+      - name: Build Application (Release)
+        run: |
+          xcodebuild -project HermesMac.xcodeproj \
+            -scheme HermesMac \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package HermesMac.app
+        run: |
+          APP_PATH="build/Build/Products/Release/HermesMac.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "Error: HermesMac.app not found at $APP_PATH"
+            exit 1
+          fi
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" HermesMac.zip
+          shasum -a 256 HermesMac.zip > HermesMac.zip.sha256
+          echo "Package created successfully: HermesMac.zip"
+          cat HermesMac.zip.sha256
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: HermesMac-macOS
+          path: |
+            HermesMac.zip
+            HermesMac.zip.sha256
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            HermesMac.zip
+            HermesMac.zip.sha256
+          generate_release_notes: true
