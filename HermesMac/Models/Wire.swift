@@ -85,5 +85,5 @@ enum ConversationEntry: Identifiable {
     }
 }
 struct Approval: Identifiable { let id: String; let params: JSON }
-struct ConversationKey: Hashable, Codable { let service: String; let profile: String; let storedID: String }
-struct ClientError: LocalizedError { let message: String; var retryable = false; var errorDescription: String? { message } }
+struct ConversationKey: Hashable, Codable, Sendable { let service: String; let profile: String; let storedID: String }
+struct ClientError: LocalizedError { let message: String; var retryable = false; var httpStatus: Int? = nil; var errorDescription: String? { message } }

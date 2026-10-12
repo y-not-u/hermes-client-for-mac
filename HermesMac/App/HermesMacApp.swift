@@ -4,6 +4,10 @@ import AppKit
 @main struct HermesMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var store = AppStore()
+    init() {
+        NSScroller.enableCleanTrackBackground()
+    }
+
     var body: some Scene {
         WindowGroup("Hermes", id: "main") {
             ContentView(store: store).frame(minWidth: 800, minHeight: 540)
@@ -25,6 +29,15 @@ import AppKit
     }
 }
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) { NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true) }
+    override init() {
+        super.init()
+        NSScroller.enableCleanTrackBackground()
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        NSScroller.enableCleanTrackBackground()
+    }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }

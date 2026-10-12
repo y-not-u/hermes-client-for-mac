@@ -3,49 +3,33 @@ import AppKit
 
 struct MarkdownView: View {
     let text: String
-
-    private var segments: [Segment] {
-        var result: [Segment] = []
-        var body = ""
-        var code = false
-        var language = ""
-
-        for line in text.components(separatedBy: "\n") {
-            if line.hasPrefix("```") {
-                if !body.isEmpty {
-                    result.append(Segment(text: body, code: code, language: language))
-                    body = ""
-                }
-                code.toggle()
-                language = code ? String(line.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines) : ""
-            } else {
-                body += (body.isEmpty ? "" : "\n") + line
-            }
-        }
-        if !body.isEmpty {
-            result.append(Segment(text: body, code: code, language: language))
-        }
-        return result
-    }
+    var media: MediaPresentation? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                if segment.code {
-                    CodeBlockView(code: segment.text, language: segment.language)
-                } else {
-                    MarkdownTextBlock(text: segment.text)
+            ForEach(Array(MediaDirective.segments(text, renderMedia: media != nil).enumerated()), id: \.offset) { _, segment in
+                switch segment {
+                case .code(let code, let language):
+                    CodeBlockView(code: code, language: language)
+                case .text(let text):
+                    MarkdownTextBlock(text: text)
                         .textSelection(.enabled)
+                case .image(let path):
+                    if let media {
+                        let request = RemoteImageRequest(conversation: media.conversation, messageID: media.messageID, path: path)
+                        RemoteImageView(request: request, store: media.store)
+                            .id(request)
+                    }
                 }
             }
         }
     }
+}
 
-    private struct Segment {
-        let text: String
-        let code: Bool
-        let language: String
-    }
+struct MediaPresentation {
+    let conversation: ConversationKey
+    let messageID: String
+    let store: AppStore
 }
 
 // MARK: - Modern Developer Code Block
@@ -94,6 +78,8 @@ private struct CodeBlockView: View {
                     .fixedSize(horizontal: true, vertical: false)
                     .textSelection(.enabled)
             }
+            .cleanScrollBars()
+            .environment(\.colorScheme, .dark)
             .background(Color(red: 0.10, green: 0.11, blue: 0.13))
         }
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))

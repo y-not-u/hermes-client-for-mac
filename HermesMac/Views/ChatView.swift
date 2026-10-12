@@ -273,7 +273,9 @@ struct ChatView: View {
                                 profileName: store.selectedProfile,
                                 profileTitle: store.profileTitle,
                                 tools: row.tools,
-                                isRunning: c.generating
+                                isRunning: c.generating,
+                                conversation: c.key,
+                                store: store
                             )
                         }
 
@@ -323,6 +325,7 @@ struct ChatView: View {
                     .frame(maxWidth: 860)
                     .frame(maxWidth: .infinity)
                 }
+                .cleanScrollBars()
                 .overlay(alignment: .top) {
                     if c.loading {
                         ProgressView()
@@ -401,6 +404,8 @@ private struct MessageRowView: View {
     let profileTitle: String
     var tools: [ToolCall] = []
     var isRunning = false
+    let conversation: ConversationKey
+    let store: AppStore
 
     @State private var isHovered = false
 
@@ -476,7 +481,9 @@ private struct MessageRowView: View {
                     }
 
                     if !message.text.isEmpty {
-                        MarkdownView(text: message.text)
+                        MarkdownView(text: message.text, media: MediaPresentation(
+                            conversation: conversation, messageID: message.id, store: store
+                        ))
                     }
                 }
             }
@@ -543,6 +550,7 @@ private struct ToolCallGroup: View {
                             }
                         }
                     }
+                    .cleanScrollBars()
                     .frame(maxHeight: 240)
                     .onAppear { scrollToLatest(proxy) }
                     .onChange(of: tools.last?.id) { _, _ in
@@ -634,6 +642,8 @@ private struct ToolCallRow: View {
                             .padding(10)
                             .textSelection(.enabled)
                     }
+                    .cleanScrollBars()
+                    .environment(\.colorScheme, .dark)
                     .background(Color(red: 0.12, green: 0.13, blue: 0.15))
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     .padding(8)
@@ -679,6 +689,8 @@ struct ApprovalCard: View {
                             .padding(8)
                             .textSelection(.enabled)
                     }
+                    .cleanScrollBars()
+                    .environment(\.colorScheme, .dark)
                     .background(Color(red: 0.12, green: 0.13, blue: 0.15))
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }

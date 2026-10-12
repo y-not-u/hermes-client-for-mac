@@ -15,6 +15,10 @@ fi
 pkill -x HermesMac >/dev/null 2>&1 || true
 xcodebuild -project HermesMac.xcodeproj -scheme HermesMac -configuration Debug -derivedDataPath DerivedData CODE_SIGN_STYLE=Manual "CODE_SIGN_IDENTITY=$SIGNING_IDENTITY" build > /tmp/hermes-mac-build.log 2>&1 || { tail -80 /tmp/hermes-mac-build.log; exit 1; }
 APP_BUNDLE="$ROOT_DIR/DerivedData/Build/Products/Debug/HermesMac.app"
+if [ ! -x "$APP_BUNDLE/Contents/MacOS/HermesCredentialHelper" ]; then
+  echo "Build produced an app without HermesCredentialHelper. Regenerate the project with python3 script/generate_project.py and rebuild." >&2
+  exit 1
+fi
 case "$MODE" in
   --build) exit 0 ;;
   run) /usr/bin/open -n "$APP_BUNDLE" ;;

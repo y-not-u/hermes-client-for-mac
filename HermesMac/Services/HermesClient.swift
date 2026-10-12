@@ -70,7 +70,7 @@ import Foundation
             try await refresh(); return try await rest(path, method: method, query: query, body: body, authenticated: authenticated, retry: false)
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw ClientError(message: http.statusCode == 401 ? "认证已失效，请在设置中重新登录或更新 session token" : "HTTP \(http.statusCode)：\(String(decoding: data.prefix(800), as: UTF8.self))")
+            throw ClientError(message: http.statusCode == 401 ? "认证已失效，请在设置中重新登录或更新 session token" : "HTTP \(http.statusCode)：\(String(decoding: data.prefix(800), as: UTF8.self))", httpStatus: http.statusCode)
         }
         guard let value = try? JSONDecoder().decode(JSON.self, from: data) else { throw ClientError(message: "服务接口未返回 JSON，请检查地址或升级 Hermes") }; return value
     }
@@ -92,6 +92,24 @@ import Foundation
                 .internationalRoamingOff, .dataNotAllowed, .callIsActive].contains(error.code)
     }
     func testConnection() async throws -> JSON { try await rest("/api/status") }
+    func imageData(for request: RemoteImageRequest) async throws -> Data {
+        guard request.conversation.service == service else { throw ClientError(message: "图片所属服务已切换") }
+        do {
+            let result = try await rest("/api/fs/read-data-url", query: [
+                URLQueryItem(name: "path", value: request.path),
+                URLQueryItem(name: "profile", value: request.conversation.profile),
+                URLQueryItem(name: "session_id", value: request.conversation.storedID)
+            ])
+            return try RemoteImageDecoder.dataURL(result["dataUrl"].string)
+        } catch let error as ClientError {
+            switch error.httpStatus {
+            case 403: throw ClientError(message: "服务端不允许读取这张图片（HTTP 403）", httpStatus: 403)
+            case 404: throw ClientError(message: "图片已被清理、会话不存在，或此服务尚未提供图片读取接口（HTTP 404）", httpStatus: 404)
+            case 413: throw ClientError(message: "图片超过服务端预览大小限制（HTTP 413）", httpStatus: 413)
+            default: throw error
+            }
+        }
+    }
     func connect() async throws {
         disconnect()
         let status = try await testConnection()

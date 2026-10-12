@@ -18,6 +18,7 @@ import Observation
     var listHasMore: [String: Bool] = [:]
     var draft = "" { didSet { persistDraft() } }
     private var client: HermesClient?
+    @ObservationIgnored private let imageCache = RemoteImageCache()
     @ObservationIgnored private let makeClient: (String) throws -> HermesClient
     private var generation = UUID()
     private var navigation = UUID()
@@ -35,6 +36,12 @@ import Observation
     var service: String { client?.service ?? address }
     var currentKey: ConversationKey? { selectedSession.map { ConversationKey(service: service, profile: selectedProfile, storedID: $0) } }
     var current: Conversation? { currentKey.flatMap { conversations[$0] } }
+    func image(for request: RemoteImageRequest) async throws -> RemoteImageFile {
+        guard let client, client.service == request.conversation.service else {
+            throw ClientError(message: "请先连接图片所属的 Hermes 服务")
+        }
+        return try await imageCache.image(for: request) { try await client.imageData(for: request) }
+    }
     var profileTitle: String { profiles.first(where: { $0.name == selectedProfile })?.displayName ?? "Hermes" }
     var canSend: Bool { connected && !selectedProfile.isEmpty && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !profileBusy(selectedProfile) && current?.readOnlyReason == nil && current?.loading != true && (selectedSession == nil || current != nil) }
     func profileBusy(_ profile: String) -> Bool { busyProfiles.contains(profile) || conversations.values.contains { $0.key.profile == profile && ($0.generating || $0.uncertain) } }

@@ -164,6 +164,7 @@ struct SessionListView: View {
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                     }
+                    .cleanScrollBars()
                 }
             }
 
@@ -201,6 +202,7 @@ struct SessionListView: View {
             .padding(.vertical, 7)
             .background(Color(nsColor: .windowBackgroundColor).opacity(0.4))
         }
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.35))
         .alert("重命名会话", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("标题", text: $title)
             Button("取消", role: .cancel) { renaming = nil }

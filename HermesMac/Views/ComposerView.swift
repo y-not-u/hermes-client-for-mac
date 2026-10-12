@@ -186,6 +186,9 @@ struct ComposerTextView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        scroll.verticalScroller = TransparentOverlayScroller()
         scroll.drawsBackground = false
 
         let view = SubmitTextView()
@@ -206,6 +209,9 @@ struct ComposerTextView: NSViewRepresentable {
     func updateNSView(_ view: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let editor = view.documentView as? SubmitTextView else { return }
+        view.autohidesScrollers = true
+        view.scrollerStyle = .overlay
+        view.drawsBackground = false
         // Never replace marked text while an IME owns the composition.
         if editor.string != text && !editor.hasMarkedText() {
             editor.string = text

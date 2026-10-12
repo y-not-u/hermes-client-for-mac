@@ -1,5 +1,7 @@
 import XCTest
 import Security
+import SwiftUI
+import AppKit
 @testable import HermesMac
 
 @MainActor final class StateTests: XCTestCase {
@@ -122,4 +124,66 @@ import Security
         c.apply(type: "message.complete", payload: .object(["text": .string("partial restored")]), visible: true)
         XCTAssertEqual(c.messages.count, 2)
     }
+
+    func testCleanScrollerOptimizationAndTransparentScroller() {
+        // Test global track clean background enablement
+        NSScroller.enableCleanTrackBackground()
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
+        scroll.hasVerticalScroller = true
+        let overlayScroller = TransparentOverlayScroller(frame: NSRect(x: 0, y: 0, width: 14, height: 100))
+        scroll.verticalScroller = overlayScroller
+        scroll.scrollerStyle = .overlay
+        XCTAssertEqual(scroll.verticalScroller?.scrollerStyle, .overlay)
+
+        // Verify drawing works cleanly without errors
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 14,
+            pixelsHigh: 100,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        )
+        guard let rep else { return }
+        NSGraphicsContext.saveGraphicsState()
+        let ctx = NSGraphicsContext(bitmapImageRep: rep)
+        NSGraphicsContext.current = ctx
+        overlayScroller.draw(NSRect(x: 0, y: 0, width: 14, height: 100))
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    func testHostingCleanScrollBarsModifier() {
+        let view = ScrollView {
+            Text("Sample Content")
+        }
+        .cleanScrollBars()
+
+        let hosting = NSHostingView(rootView: view)
+        hosting.frame = NSRect(x: 0, y: 0, width: 200, height: 200)
+        hosting.layoutSubtreeIfNeeded()
+
+        var found: NSScrollView?
+        func traverse(_ v: NSView) {
+            if let s = v as? NSScrollView { found = s; return }
+            for sub in v.subviews { traverse(sub) }
+        }
+        traverse(hosting)
+        XCTAssertNotNil(found)
+    }
+
+    func testCleanScrollerAndTransparentScrollView() {
+        NSScroller.enableCleanTrackBackground()
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
+        XCTAssertFalse(scroll.drawsBackground)
+        XCTAssertEqual(scroll.backgroundColor, .clear)
+        XCTAssertFalse(scroll.contentView.drawsBackground)
+        XCTAssertEqual(scroll.contentView.backgroundColor, .clear)
+    }
 }
+
