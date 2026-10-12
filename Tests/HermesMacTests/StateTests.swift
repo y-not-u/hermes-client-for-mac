@@ -5,6 +5,37 @@ import AppKit
 @testable import HermesMac
 
 @MainActor final class StateTests: XCTestCase {
+    func testReplyNotificationsOnlyForSuccessfulBackgroundCompletion() {
+        var active = true
+        var replies: [(ConversationKey, String, String)] = []
+        let store = AppStore(isAppActive: { active }, onReplyCompleted: { replies.append(($0, $1, $2)) })
+        let c = Conversation(key: ConversationKey(service: "local", profile: "a", storedID: "stored"))
+        c.begin("foreground")
+        store.applyEvent(type: "message.complete", payload: .object(["text": .string("foreground answer")]), to: c)
+        XCTAssertTrue(replies.isEmpty)
+
+        active = false
+        c.begin("background")
+        store.applyEvent(type: "message.delta", payload: .object(["text": .string("partial")]), to: c)
+        XCTAssertTrue(replies.isEmpty)
+        let completed = JSON.object(["text": .string("background answer")])
+        store.applyEvent(type: "message.complete", payload: completed, to: c)
+        XCTAssertEqual(replies.count, 1)
+        XCTAssertEqual(replies.first?.0, c.key)
+        XCTAssertEqual(replies.first?.1, "a")
+        XCTAssertEqual(replies.first?.2, "background answer")
+        XCTAssertTrue(c.unread)
+        store.applyEvent(type: "message.complete", payload: completed, to: c)
+        XCTAssertEqual(replies.count, 1, "Duplicate completions must not notify again")
+
+        c.begin("failed")
+        store.applyEvent(type: "message.complete", payload: .object(["error": .string("failed")]), to: c)
+        XCTAssertEqual(replies.count, 1)
+        c.begin("stream failed")
+        store.applyEvent(type: "error", payload: .object(["message": .string("failed")]), to: c)
+        XCTAssertEqual(replies.count, 1)
+    }
+
     func testRefusedCorrectionKeepsOriginalReplyStream() {
         let c = Conversation(key: ConversationKey(service: "local", profile: "a", storedID: "stored"))
         c.begin("question"); c.appendStream("partial")

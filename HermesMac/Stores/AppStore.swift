@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import AppKit
 
 @MainActor @Observable final class AppStore {
     let local: LocalState
@@ -20,6 +21,8 @@ import Observation
     private var client: HermesClient?
     @ObservationIgnored private let imageCache = RemoteImageCache()
     @ObservationIgnored private let makeClient: (String) throws -> HermesClient
+    @ObservationIgnored private let isAppActive: @MainActor () -> Bool
+    @ObservationIgnored private let onReplyCompleted: @MainActor (ConversationKey, String, String) -> Void
     private var generation = UUID()
     private var navigation = UUID()
     private var connectionAttempt = UUID()
@@ -32,7 +35,15 @@ import Observation
     private var listRevision: [String: UUID] = [:]
     private var busyProfiles: Set<String> = []
     private let historyPageSize = 20
-    init(local: LocalState? = nil, makeClient: ((String) throws -> HermesClient)? = nil) { let state = local ?? LocalState(); self.local = state; address = state.address; self.makeClient = makeClient ?? { try HermesClient(address: $0) } }
+    init(local: LocalState? = nil, makeClient: ((String) throws -> HermesClient)? = nil,
+         isAppActive: @escaping @MainActor () -> Bool = { NSApp?.isActive ?? true },
+         onReplyCompleted: @escaping @MainActor (ConversationKey, String, String) -> Void = { _, _, _ in }) {
+        let state = local ?? LocalState()
+        self.local = state; address = state.address
+        self.makeClient = makeClient ?? { try HermesClient(address: $0) }
+        self.isAppActive = isAppActive
+        self.onReplyCompleted = onReplyCompleted
+    }
     var service: String { client?.service ?? address }
     var currentKey: ConversationKey? { selectedSession.map { ConversationKey(service: service, profile: selectedProfile, storedID: $0) } }
     var current: Conversation? { currentKey.flatMap { conversations[$0] } }
@@ -438,11 +449,11 @@ import Observation
             // can arrive before its response; retain these independent tool records.
             let type = params["type"].string
             if type == "tool.start" || type == "tool.complete" || (type == "message.complete" && (c.generating || frame["_receivedOrdinal"].number > c.historyReadAfter)) {
-                c.apply(type: type, payload: params["payload"], visible: currentKey == key)
+                applyEvent(type: type, payload: params["payload"], to: c)
             }
             return
         }
-        if frame["method"].string == "event" { c.apply(type: params["type"].string, payload: params["payload"], visible: currentKey == key) }
+        if frame["method"].string == "event" { applyEvent(type: params["type"].string, payload: params["payload"], to: c) }
         else if frame["method"].string == "approval" {
             if !c.approvals.contains(where: { $0.id == frame["id"].string }) { c.approvals.append(Approval(id: frame["id"].string, params: params)) }
         } else if !frame["id"].string.isEmpty {
@@ -450,5 +461,13 @@ import Observation
             Task { try? await client?.respond(id: requestID) }
             c.error = "此客户端尚不支持服务请求：\(frame["method"].string)"
         }
+    }
+    func applyEvent(type: String, payload: JSON, to conversation: Conversation) {
+        let wasGenerating = conversation.generating
+        let active = isAppActive()
+        conversation.apply(type: type, payload: payload, visible: active && currentKey == conversation.key)
+        guard type == "message.complete", wasGenerating, conversation.error == nil, !active else { return }
+        let profile = profiles.first { $0.name == conversation.key.profile }?.displayName ?? conversation.key.profile
+        onReplyCompleted(conversation.key, profile, payload["text"].string)
     }
 }

@@ -3,7 +3,9 @@ import AppKit
 
 @main struct HermesMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @State private var store = AppStore()
+    @State private var store = AppStore(onReplyCompleted: { _, profile, text in
+        ReplyNotifications.shared.replyCompleted(profile: profile, text: text)
+    })
     init() {
         NSScroller.enableCleanTrackBackground()
     }
@@ -35,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        ReplyNotifications.shared.start()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         NSScroller.enableCleanTrackBackground()
