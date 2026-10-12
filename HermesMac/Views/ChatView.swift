@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ChatView: View {
     var store: AppStore
+    @State private var imagePreview: ImagePreview?
 
     private var currentSessionTitle: String {
         if let selected = store.selectedSession,
@@ -75,6 +76,9 @@ struct ChatView: View {
 
             // Bottom Input
             ComposerView(store: store)
+        }
+        .sheet(item: $imagePreview) { preview in
+            ImagePreviewView(file: preview.file, filename: preview.filename)
         }
     }
 
@@ -275,7 +279,8 @@ struct ChatView: View {
                                 tools: row.tools,
                                 isRunning: c.generating,
                                 conversation: c.key,
-                                store: store
+                                store: store,
+                                previewImage: { file, filename in imagePreview = ImagePreview(file: file, filename: filename) }
                             )
                         }
 
@@ -337,25 +342,25 @@ struct ChatView: View {
                     }
                 }
                 .onChange(of: c.messages.count) { _, _ in
-                    if c.generating && !c.loading {
+                    if c.generating && !c.loading && imagePreview == nil {
                         proxy.scrollTo("bottom", anchor: .bottom)
                     }
                 }
                 .onChange(of: c.tools.count) { _, _ in
-                    if !c.loading {
+                    if !c.loading && imagePreview == nil {
                         withAnimation(.easeOut(duration: 0.2)) {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
                     }
                 }
                 .onChange(of: c.messages.last?.text) { _, _ in
-                    if c.generating && !c.loading { proxy.scrollTo("bottom", anchor: .bottom) }
+                    if c.generating && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
                 .onChange(of: c.generating) { _, running in
-                    if !running && !c.loading { proxy.scrollTo("bottom", anchor: .bottom) }
+                    if !running && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
                 .onChange(of: c.approvals.count) { _, _ in
-                    if !c.loading { proxy.scrollTo("bottom", anchor: .bottom) }
+                    if !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
             }
         }
@@ -406,6 +411,7 @@ private struct MessageRowView: View {
     var isRunning = false
     let conversation: ConversationKey
     let store: AppStore
+    let previewImage: (RemoteImageFile, String) -> Void
 
     @State private var isHovered = false
 
@@ -482,7 +488,7 @@ private struct MessageRowView: View {
 
                     if !message.text.isEmpty {
                         MarkdownView(text: message.text, media: MediaPresentation(
-                            conversation: conversation, messageID: message.id, store: store
+                            conversation: conversation, messageID: message.id, store: store, preview: previewImage
                         ))
                     }
                 }

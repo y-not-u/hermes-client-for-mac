@@ -49,7 +49,9 @@ enum MediaDirective {
             let codeRanges = inlineCode.matches(in: line, range: fullRange).map(\.range)
             var cursor = 0
             for match in tags.matches(in: line, range: fullRange) {
-                guard !codeRanges.contains(where: { NSIntersectionRange($0, match.range).length > 0 }) else { continue }
+                guard !codeRanges.contains(where: {
+                    NSIntersectionRange($0, match.range).length > 0 && !NSEqualRanges(NSIntersectionRange($0, match.range), $0)
+                }) else { continue }
                 let path = (1...4).first(where: { match.range(at: $0).location != NSNotFound })
                     .map { source.substring(with: match.range(at: $0)) } ?? ""
                 let ext = (path as NSString).pathExtension.lowercased()

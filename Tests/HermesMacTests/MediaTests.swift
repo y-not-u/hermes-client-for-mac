@@ -67,6 +67,7 @@ private actor ImageFetchCounter {
             .text("开头"), .image("/tmp/图.png"), .text("中间 "), .image("/tmp/含 空格.png"), .text(" 说明"), .text("结尾")
         ])
         XCTAssertEqual(MediaDirective.segments(text, renderMedia: false), [.text(text)])
+        XCTAssertEqual(MediaDirective.segments("MEDIA:`/tmp/含 空格.png`", renderMedia: true), [.image("/tmp/含 空格.png")])
     }
 
     func testCodeQuotesAndNonImagesDoNotTriggerDownloads() {

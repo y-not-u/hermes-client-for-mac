@@ -5,22 +5,23 @@ import UniformTypeIdentifiers
 struct RemoteImageView: View {
     let request: RemoteImageRequest
     let store: AppStore
+    let preview: (RemoteImageFile, String) -> Void
     @State private var file: RemoteImageFile?
     @State private var thumbnail: NSImage?
     @State private var failure: String?
     @State private var attempt = 0
-    @State private var previewing = false
     @State private var exporting = false
     @State private var exportFailure: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let thumbnail {
-                Button { previewing = true } label: {
+                Button { showPreview() } label: {
                     Image(nsImage: thumbnail)
                         .resizable()
                         .scaledToFit()
-                        .frame(maxWidth: .infinity, maxHeight: 340)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: min(340, max(120, 536 * thumbnail.size.height / thumbnail.size.width)))
                         .padding(8)
                         .contentShape(Rectangle())
                 }
@@ -56,7 +57,7 @@ struct RemoteImageView: View {
                     .truncationMode(.middle)
                 Spacer(minLength: 8)
                 if file != nil {
-                    Button { previewing = true } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                    Button { showPreview() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
                         .help("查看大图").accessibilityLabel("查看大图")
                     Button { exporting = true } label: { Image(systemName: "square.and.arrow.down") }
                         .help("保存图片").accessibilityLabel("保存图片")
@@ -73,7 +74,7 @@ struct RemoteImageView: View {
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.secondary.opacity(0.18)))
         .contextMenu {
             if file != nil {
-                Button("查看大图") { previewing = true }
+                Button("查看大图") { showPreview() }
                 Button("保存图片…") { exporting = true }
             }
             Button("复制远程路径") {
@@ -93,9 +94,6 @@ struct RemoteImageView: View {
                 if !Task.isCancelled { failure = error.localizedDescription }
             }
         }
-        .sheet(isPresented: $previewing) {
-            if let file { ImagePreviewView(file: file, filename: request.filename) }
-        }
         .fileExporter(isPresented: $exporting,
                       document: file.map { ImageExportDocument(url: $0.url) },
                       contentType: UTType(filenameExtension: (request.path as NSString).pathExtension) ?? .image,
@@ -106,9 +104,18 @@ struct RemoteImageView: View {
             Button("好", role: .cancel) { exportFailure = nil }
         } message: { Text(exportFailure ?? "") }
     }
+    private func showPreview() {
+        if let file { preview(file, request.filename) }
+    }
 }
 
-private struct ImagePreviewView: View {
+struct ImagePreview: Identifiable {
+    var id: URL { file.url }
+    let file: RemoteImageFile
+    let filename: String
+}
+
+struct ImagePreviewView: View {
     let file: RemoteImageFile
     let filename: String
     @Environment(\.dismiss) private var dismiss

@@ -33,4 +33,4 @@ GitHub Actions 在 push 到 `main`、向 `main` 提交 PR 或手动触发时运�
 
 源码契约参考固定为官方 Hermes revision [`c57331677d7fc46298a7159cf3a650853f0966c5`](https://github.com/NousResearch/hermes-agent/tree/c57331677d7fc46298a7159cf3a650853f0966c5)。10 项本地模拟测试通过；另在用户提供的 Hermes 0.21.5 局域网服务通过原生认证、历史恢复、两个 profiles 并行真实回复、草稿隔离、重命名和重连测试。真实服务仅广告版本号，不能据此认定运行上述 git revision。真实工具审批、中断、网络故障、服务重启与中文输入法仍需人工验收。详见 [协议约定](docs/PROTOCOL.md) 与 [验证记录](docs/VALIDATION.md)。
 
-首版 Markdown 支持内联格式与可复制围栏代码块；不提供完整 Markdown 表格、图片附件或语法高亮。首版不包含 profile 创建和配置编辑、SSH、服务自动启动、语音、附件、文件浏览器、多服务同时连接，也不捆绑 Python、Hermes 或浏览器运行时。
+Markdown 支持内联格式、可复制围栏代码块，以及助手回答中的 `MEDIA:` 远程图片预览、放大和原图保存。图片通过 Hermes 已有的 `/api/fs/read-data-url` 接口读取并在 Mac 缓存，无需修改远程服务；图片权限仍由服务端决定。暂不提供完整 Markdown 表格、语法高亮、profile 创建和配置编辑、SSH、服务自动启动、语音、上传附件、文件浏览器、多服务同时连接，也不捆绑 Python、Hermes 或浏览器运行时。

@@ -17,7 +17,7 @@ struct MarkdownView: View {
                 case .image(let path):
                     if let media {
                         let request = RemoteImageRequest(conversation: media.conversation, messageID: media.messageID, path: path)
-                        RemoteImageView(request: request, store: media.store)
+                        RemoteImageView(request: request, store: media.store, preview: media.preview)
                             .id(request)
                     }
                 }
@@ -30,6 +30,7 @@ struct MediaPresentation {
     let conversation: ConversationKey
     let messageID: String
     let store: AppStore
+    let preview: (RemoteImageFile, String) -> Void
 }
 
 // MARK: - Modern Developer Code Block
