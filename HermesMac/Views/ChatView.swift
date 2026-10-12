@@ -3,6 +3,7 @@ import SwiftUI
 struct ChatView: View {
     var store: AppStore
     @State private var imagePreview: ImagePreview?
+    @State private var pendingInitialScroll: ConversationKey?
 
     private var currentSessionTitle: String {
         if let selected = store.selectedSession,
@@ -330,6 +331,7 @@ struct ChatView: View {
                     .frame(maxWidth: 860)
                     .frame(maxWidth: .infinity)
                 }
+                .defaultScrollAnchor(.bottom)
                 .cleanScrollBars()
                 .overlay(alignment: .top) {
                     if c.loading {
@@ -339,6 +341,18 @@ struct ChatView: View {
                             .background(.regularMaterial, in: Capsule())
                             .padding(.top, 8)
                             .allowsHitTesting(false)
+                    }
+                }
+                .onChange(of: c.key, initial: true) { _, key in
+                    pendingInitialScroll = c.loading ? key : nil
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+                .onChange(of: c.loading) { _, loading in
+                    // Only finish the opening scroll; paging older history must
+                    // leave the reader at their current position.
+                    if !loading && pendingInitialScroll == c.key {
+                        pendingInitialScroll = nil
+                        proxy.scrollTo("bottom", anchor: .bottom)
                     }
                 }
                 .onChange(of: c.messages.count) { _, _ in
@@ -363,6 +377,7 @@ struct ChatView: View {
                     if !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
             }
+            .id(c.key)
         }
     }
 }
