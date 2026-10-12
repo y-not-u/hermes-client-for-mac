@@ -175,32 +175,6 @@ struct SessionListView: View {
                 }
                 .padding(.vertical, 4)
             }
-
-            // Refined Footer Status Bar
-            Rectangle()
-                .fill(Color(nsColor: .separatorColor).opacity(0.35))
-                .frame(height: 1)
-
-            HStack {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(Color.accentColor.opacity(0.85))
-                        .frame(width: 6, height: 6)
-                    Text(store.profileTitle)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                Spacer()
-
-                Text("Hermes")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(Color(nsColor: .windowBackgroundColor).opacity(0.4))
         }
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.35))
         .alert("重命名会话", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
