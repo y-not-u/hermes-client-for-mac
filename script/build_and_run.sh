@@ -4,8 +4,12 @@ MODE="${1:-run}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 SIGNING_IDENTITY="${HERMES_SIGNING_IDENTITY:-HermesMac Local Development}"
+if [ "$SIGNING_IDENTITY" = "-" ]; then
+  echo "Ad hoc signing cannot preserve credential access. Run ./script/setup_local_signing.sh and use HermesMac Local Development." >&2
+  exit 1
+fi
 if [ "$SIGNING_IDENTITY" != "-" ] && ! security find-identity -v -p codesigning | grep -Fq "\"$SIGNING_IDENTITY\""; then
-  echo "Signing identity '$SIGNING_IDENTITY' not found. Run ./script/setup_local_signing.sh once, or set HERMES_SIGNING_IDENTITY to a certificate name (use '-' for ad hoc builds)." >&2
+  echo "Signing identity '$SIGNING_IDENTITY' not found. Run ./script/setup_local_signing.sh once, or set HERMES_SIGNING_IDENTITY to a certificate name." >&2
   exit 1
 fi
 pkill -x HermesMac >/dev/null 2>&1 || true

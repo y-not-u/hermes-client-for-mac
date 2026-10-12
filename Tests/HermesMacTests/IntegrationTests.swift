@@ -2,6 +2,25 @@ import XCTest
 import Security
 @testable import HermesMac
 
+private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
+    private static let lock = NSLock()
+    private static var remainingFailures = 0
+    static func failNextRequest() {
+        lock.lock(); defer { lock.unlock() }
+        remainingFailures = 1
+    }
+    override class func canInit(with request: URLRequest) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return remainingFailures > 0 && request.url?.path == "/api/status"
+    }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.lock.lock(); Self.remainingFailures -= 1; Self.lock.unlock()
+        client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+    }
+    override func stopLoading() {}
+}
+
 @MainActor final class IntegrationTests: XCTestCase {
     private var address: String { ProcessInfo.processInfo.environment["HERMES_TEST_SERVER"] ?? "" }
     private func fixture(_ body: [String: JSON]) async throws -> JSON {
@@ -37,6 +56,36 @@ import Security
         _ = try await fixture(["action": .string("emit"), "stored_id": .string(stored), "frame": .object([
             "method": .string("event"), "params": .object(["type": .string(type), "payload": .object(["text": .string(text)])])
         ])])
+    }
+
+    func testColdStartAutomaticallyRetriesAndRestoresSavedNativeLogin() async throws {
+        guard !address.isEmpty else { throw XCTSkip("Run script/test.sh to enable protocol integration tests") }
+        _ = try await fixture(["action": .string("reset")])
+        _ = try await fixture(["action": .string("configure"), "native": .bool(true)])
+        let name = "HermesMacStartupTests-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        let local = LocalState(defaults: defaults); local.address = address
+        local.update(address) { $0.selectedProfile = "b"; $0.drafts[LocalState.draftKey(profile: "b", session: nil)] = "saved draft" }
+        try Keychain.save(Credentials(accessToken: "fresh-token", refreshToken: "refresh-token", provider: "fixture", expiresAt: 9999999999), service: address)
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StartupOfflineProtocol.self]
+        StartupOfflineProtocol.failNextRequest()
+        let client = try HermesClient(address: address, session: URLSession(configuration: config))
+        let store = AppStore(local: local, makeClient: { _ in client })
+        defer {
+            client.disconnect(); defaults.removePersistentDomain(forName: name)
+            SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "com.hermes.mac.credentials", kSecAttrAccount as String: address] as CFDictionary)
+        }
+        await store.connect()
+        XCTAssertFalse(store.connected)
+        XCTAssertTrue(store.connecting)
+        XCTAssertEqual(store.connection, "等待自动重连…")
+        try await eventually { store.connected && store.selectedProfile == "b" }
+        XCTAssertEqual(store.draft, "saved draft")
+        XCTAssertNil(store.error)
+        let stats = try await fixture(["action": .string("stats")])
+        XCTAssertEqual(stats["refreshes"].number, 0)
+        XCTAssertEqual(stats["tickets"].number, 1)
     }
 
     func testConcurrentProfilesApprovalUnreadAndDraftIsolation() async throws {
@@ -197,6 +246,15 @@ import Security
         XCTAssertEqual(stats["refreshes"].number, 1)
         XCTAssertEqual(stats["tickets"].number, 1)
         XCTAssertEqual(stats["requests"].array.first?["method"].string, "client.capabilities")
+        client.disconnect()
+        let restarted = try HermesClient(address: address)
+        defer { restarted.disconnect() }
+        try await restarted.connect()
+        XCTAssertTrue(restarted.isConnected)
+        let afterRestart = try await fixture(["action": .string("stats")])
+        XCTAssertEqual(afterRestart["refreshes"].number, 1)
+        XCTAssertEqual(afterRestart["tickets"].number, 2)
+
     }
 
     func testDraftEditedDuringSessionCreationMigratesToCreatedSession() async throws {

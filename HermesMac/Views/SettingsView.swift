@@ -150,7 +150,7 @@ struct SettingsView: View {
         busy = true
         Task {
             await store.connect(address: address, token: token.isEmpty ? nil : token)
-            token = ""
+            if store.connected { token = "" }
             message = store.error ?? "已连接"
             busy = false
         }

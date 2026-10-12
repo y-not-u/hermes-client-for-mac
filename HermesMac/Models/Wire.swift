@@ -68,6 +68,22 @@ struct Message: Identifiable, Equatable {
     }
 }
 struct ToolCall: Identifiable { let id: String; let name: String; var details: String; var complete = false }
+struct ToolActivity: Identifiable {
+    let id: String
+    var afterMessageID: String?
+    var tools: [ToolCall]
+}
+enum ConversationEntry: Identifiable {
+    case message(Message)
+    case tools(ToolActivity)
+
+    var id: String {
+        switch self {
+        case .message(let message): return "message-" + message.id
+        case .tools(let activity): return "tools-" + activity.id
+        }
+    }
+}
 struct Approval: Identifiable { let id: String; let params: JSON }
 struct ConversationKey: Hashable, Codable { let service: String; let profile: String; let storedID: String }
-struct ClientError: LocalizedError { let message: String; var errorDescription: String? { message } }
+struct ClientError: LocalizedError { let message: String; var retryable = false; var errorDescription: String? { message } }

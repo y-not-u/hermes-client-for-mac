@@ -52,33 +52,6 @@ struct ChatView: View {
                 }
 
                 Spacer()
-
-                HStack(spacing: 6) {
-                    Button {
-                        store.newSession()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 11, weight: .semibold))
-                            Text("新会话")
-                                .font(.system(size: 12))
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4.5)
-                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .help("新会话 · ⌘N")
-
-                    SettingsLink {
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.system(size: 12))
-                            .frame(width: 26, height: 26)
-                            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .help("连接设置")
-                }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
@@ -103,6 +76,29 @@ struct ChatView: View {
             // Bottom Input
             ComposerView(store: store)
         }
+    }
+
+    private func transcriptRows(_ conversation: Conversation) -> [TranscriptRow] {
+        let entries = conversation.entries
+        var rows: [TranscriptRow] = []
+        var index = 0
+        while index < entries.count {
+            let entry = entries[index]
+            switch entry {
+            case .message(let message):
+                rows.append(TranscriptRow(id: entry.id, message: message, tools: []))
+            case .tools(let activity):
+                var reply = Message(id: activity.id, role: "assistant", text: "")
+                if index + 1 < entries.count,
+                   case .message(let message) = entries[index + 1], message.role == "assistant" {
+                    reply = message
+                    index += 1
+                }
+                rows.append(TranscriptRow(id: entry.id, message: reply, tools: activity.tools))
+            }
+            index += 1
+        }
+        return rows
     }
 
     // MARK: - Empty State / Hero Welcome
@@ -271,17 +267,14 @@ struct ChatView: View {
                             .padding(.top, 8)
                         }
 
-                        ForEach(c.messages) { message in
+                        ForEach(transcriptRows(c)) { row in
                             MessageRowView(
-                                message: message,
+                                message: row.message,
                                 profileName: store.selectedProfile,
-                                profileTitle: store.profileTitle
+                                profileTitle: store.profileTitle,
+                                tools: row.tools,
+                                isRunning: c.generating
                             )
-                            .id(message.id)
-                        }
-
-                        if !c.tools.isEmpty {
-                            ToolCallGroup(tools: c.tools)
                         }
 
                         ForEach(c.approvals) { approval in
@@ -345,6 +338,19 @@ struct ChatView: View {
                         proxy.scrollTo("bottom", anchor: .bottom)
                     }
                 }
+                .onChange(of: c.tools.count) { _, _ in
+                    if !c.loading {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo("bottom", anchor: .bottom)
+                        }
+                    }
+                }
+                .onChange(of: c.messages.last?.text) { _, _ in
+                    if c.generating && !c.loading { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
+                .onChange(of: c.generating) { _, running in
+                    if !running && !c.loading { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
                 .onChange(of: c.approvals.count) { _, _ in
                     if !c.loading { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
@@ -383,10 +389,18 @@ private struct BannerCallout: View {
 
 // MARK: - Message Row View
 
+private struct TranscriptRow: Identifiable {
+    let id: String
+    let message: Message
+    let tools: [ToolCall]
+}
+
 private struct MessageRowView: View {
     let message: Message
     let profileName: String
     let profileTitle: String
+    var tools: [ToolCall] = []
+    var isRunning = false
 
     @State private var isHovered = false
 
@@ -448,13 +462,22 @@ private struct MessageRowView: View {
 
                         Spacer()
 
-                        CopyButton(text: message.text, labelText: "复制回答")
-                            .opacity(isHovered ? 1 : 0)
-                            .allowsHitTesting(isHovered)
-                            .accessibilityHidden(!isHovered)
+                        if !message.text.isEmpty {
+                            CopyButton(text: message.text, labelText: "复制回答")
+                                .opacity(isHovered ? 1 : 0)
+                                .allowsHitTesting(isHovered)
+                                .accessibilityHidden(!isHovered)
+                        }
                     }
 
-                    MarkdownView(text: message.text)
+                    if !tools.isEmpty {
+                        ToolCallGroup(tools: tools, isRunning: isRunning)
+                            .padding(.vertical, 4)
+                    }
+
+                    if !message.text.isEmpty {
+                        MarkdownView(text: message.text)
+                    }
                 }
             }
             .onHover { isHovered = $0 }
@@ -466,17 +489,66 @@ private struct MessageRowView: View {
 
 private struct ToolCallGroup: View {
     let tools: [ToolCall]
+    var isRunning = false
+
+    @State private var isExpanded = false
 
     var body: some View {
         VStack(spacing: 0) {
-            ForEach(tools) { tool in
-                if tool.id != tools.first?.id {
-                    Divider()
-                        .opacity(0.4)
-                        .padding(.horizontal, 12)
+            if let latest = tools.last {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: latest.complete ? "checkmark.circle.fill" : "gearshape.2.fill")
+                            .foregroundStyle(latest.complete ? Color.green : Color.orange)
+                        Text(latest.name)
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .lineLimit(1)
+                        Text(latest.complete ? "执行完成" : "执行中…")
+                            .font(.system(size: 10))
+                            .foregroundStyle(latest.complete ? Color.green : Color.orange)
+                        Spacer(minLength: 8)
+                        Text("\(tools.count) 次工具调用")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .help(isExpanded ? "收起工具调用列表" : "展开工具调用列表")
+                .accessibilityValue(isExpanded ? "已展开" : "已收起")
+            }
 
-                ToolCallRow(title: tool.name, isComplete: tool.complete, details: tool.details)
+            if isExpanded {
+                Divider().opacity(0.4)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(tools) { tool in
+                                ToolCallRow(title: tool.name, isComplete: tool.complete, details: tool.details)
+                                    .id(tool.id)
+                                if tool.id != tools.last?.id {
+                                    Divider().opacity(0.4).padding(.horizontal, 12)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 240)
+                    .onAppear { scrollToLatest(proxy) }
+                    .onChange(of: tools.last?.id) { _, _ in
+                        withAnimation(.easeOut(duration: 0.2)) { scrollToLatest(proxy) }
+                    }
+                }
             }
         }
         .background(Color(nsColor: .controlBackgroundColor))
@@ -485,6 +557,15 @@ private struct ToolCallGroup: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 0.8)
         }
+        .onChange(of: isRunning) { _, running in
+            if !running {
+                withAnimation(.easeInOut(duration: 0.2)) { isExpanded = false }
+            }
+        }
+    }
+
+    private func scrollToLatest(_ proxy: ScrollViewProxy) {
+        if let latest = tools.last { proxy.scrollTo(latest.id, anchor: .bottom) }
     }
 }
 

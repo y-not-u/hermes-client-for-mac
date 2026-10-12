@@ -61,20 +61,60 @@ import Observation
             address = next.service; local.address = address
             installCallbacks(next, epoch: epoch)
             try await next.connect(); guard epoch == generation else { return }
-            connected = true; connecting = false; connection = "已连接"
-            try await loadProfiles(next, epoch: epoch)
-            // Reattach every previously open session, including background turns and approvals.
-            for conversation in Array(conversations.values) {
-                guard epoch == generation else { return }
-                await resume(conversation, client: next, epoch: epoch)
-            }
-            let saved = local.state(service)
-            let profile = profiles.contains(where: { $0.name == selectedProfile }) ? selectedProfile : (profiles.contains(where: { $0.name == saved.selectedProfile }) ? saved.selectedProfile : profiles.first?.name ?? "")
-            await selectProfile(profile)
+            try await restoreConnection(next, epoch: epoch)
         } catch {
             guard connectionAttempt == attempt else { return }
             if !activated { self.error = error.localizedDescription; return }
-            guard attempt == generation else { return }; connecting = false; connected = false; connection = "连接失败"; self.error = error.localizedDescription }
+            guard attempt == generation else { return }
+            connecting = false; connected = false; connection = "连接失败"; self.error = error.localizedDescription
+            if HermesClient.isTransientConnectionError(error), let client {
+                scheduleReconnect(client, epoch: attempt)
+            }
+        }
+    }
+    private func restoreConnection(_ client: HermesClient, epoch: UUID) async throws {
+        routes = [:]; earlyFrames = [:]
+        try await loadProfiles(client, epoch: epoch)
+        guard epoch == generation, !Task.isCancelled else { return }
+        connected = true; connecting = false; connection = "已连接"; error = nil
+        for conversation in Array(conversations.values) where profiles.contains(where: { $0.name == conversation.key.profile }) {
+            guard epoch == generation, !Task.isCancelled else { return }
+            await resume(conversation, client: client, epoch: epoch)
+        }
+        let saved = local.state(service)
+        let profile = profiles.contains(where: { $0.name == selectedProfile }) ? selectedProfile : (profiles.contains(where: { $0.name == saved.selectedProfile }) ? saved.selectedProfile : profiles.first?.name ?? "")
+        await selectProfile(profile)
+    }
+    private func scheduleReconnect(_ client: HermesClient, epoch: UUID) {
+        guard reconnectTask == nil else { return }
+        connecting = true; connection = "等待自动重连…"
+        reconnectTask = Task { [weak self] in
+            let delays = [2, 4, 8, 16, 30]
+            var attempt = 0
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(delays[min(attempt, delays.count - 1)])) }
+                catch { return }
+                guard let self, epoch == self.generation, !Task.isCancelled else { return }
+                self.connection = "正在自动重连…"
+                do {
+                    try await client.connect()
+                    guard epoch == self.generation, !Task.isCancelled else { return }
+                    try await self.restoreConnection(client, epoch: epoch)
+                    guard epoch == self.generation, !Task.isCancelled else { return }
+                    self.reconnectTask = nil
+                    return
+                } catch {
+                    guard epoch == self.generation, !Task.isCancelled else { return }
+                    self.connected = false; self.error = error.localizedDescription
+                    if !HermesClient.isTransientConnectionError(error) {
+                        self.connecting = false; self.connection = "连接失败"; self.reconnectTask = nil
+                        return
+                    }
+                    self.connection = "等待自动重连…"
+                    attempt += 1
+                }
+            }
+        }
     }
     private func loadProfiles(_ client: HermesClient, epoch: UUID) async throws {
         let json = try await client.rest("/api/profiles"); guard epoch == generation else { return }
@@ -104,21 +144,7 @@ import Observation
             let frames = self.buffered; self.buffered = []; frames.forEach { self.route($0) }
             self.connected = false; self.connection = "已断开 · 等待重连"; self.error = error.localizedDescription
             for c in self.conversations.values { if c.generating { c.uncertain = true }; c.runtimeID = nil }
-            self.reconnectTask = Task { [weak self] in
-                for seconds in [2, 4, 8, 16, 30] {
-                    try? await Task.sleep(for: .seconds(seconds))
-                    guard let self, !Task.isCancelled, epoch == self.generation else { return }
-                    do {
-                        try await client.connect(); guard epoch == self.generation else { return }
-                        self.routes = [:]; self.earlyFrames = [:]
-                        try await self.loadProfiles(client, epoch: epoch)
-                        for c in Array(self.conversations.values) where self.profiles.contains(where: { $0.name == c.key.profile }) { await self.resume(c, client: client, epoch: epoch) }
-                        self.connected = true; self.connection = "已连接"; self.error = nil; return
-                    } catch { guard epoch == self.generation, !Task.isCancelled else { return }; self.error = error.localizedDescription }
-                }
-                guard let self, epoch == self.generation, !Task.isCancelled else { return }
-                self.connection = "已断开 · 请手动重新连接"
-            }
+            self.scheduleReconnect(client, epoch: epoch)
         }
     }
     func selectProfile(_ profile: String) async {

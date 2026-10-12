@@ -5,7 +5,16 @@ import Observation
     let key: ConversationKey
     var runtimeID: String?
     var messages: [Message] = []
-    var tools: [ToolCall] = []
+    var toolActivities: [ToolActivity] = []
+    var tools: [ToolCall] { toolActivities.flatMap(\.tools) }
+    var entries: [ConversationEntry] {
+        var result = toolActivities.filter { $0.afterMessageID == nil }.map(ConversationEntry.tools)
+        for message in messages {
+            result.append(.message(message))
+            result += toolActivities.filter { $0.afterMessageID == message.id }.map(ConversationEntry.tools)
+        }
+        return result
+    }
     var approvals: [Approval] = []
     var generating = false
     var uncertain = false
@@ -20,6 +29,7 @@ import Observation
     var historyOffset = 0
     var hasOlder = false
     private var streamID: String?
+    private var activityID: String?
     init(key: ConversationKey) { self.key = key }
     func snapshot(_ json: JSON, history: [Message]? = nil) {
         let previousMessages = messages
@@ -49,13 +59,23 @@ import Observation
             error = "恢复的历史未确认上次发送，已保留本地显示内容。请检查服务端历史或新建会话；不会自动重发。"
         }
         historyBacklog = Array(messages.dropLast(100)); messages = Array(messages.suffix(100))
+        // History responses can replace local UUIDs with server row IDs.
+        // Keep locally observed tool groups attached to the same transcript message.
+        for index in toolActivities.indices {
+            guard let anchor = toolActivities[index].afterMessageID,
+                  !messages.contains(where: { $0.id == anchor }),
+                  let previous = previousMessages.first(where: { $0.id == anchor }),
+                  let restored = messages.last(where: { $0.role == previous.role && $0.text == previous.text }) else { continue }
+            toolActivities[index].afterMessageID = restored.id
+        }
+        if !generating { activityID = nil }
     }
     func appendStream(_ text: String) {
         if let streamID, let i = messages.firstIndex(where: { $0.id == streamID }) { messages[i].text += text }
         else { let message = Message(role: "assistant", text: text); streamID = message.id; messages.append(message) }
     }
     func begin(_ text: String) {
-        streamID = nil; error = nil; tools = []; generating = true; unread = false
+        streamID = nil; activityID = nil; error = nil; generating = true; unread = false
         messages.append(Message(role: "user", text: text))
     }
     func apply(type: String, payload: JSON, visible: Bool) {
@@ -72,14 +92,32 @@ import Observation
                     messages.append(Message(role: "assistant", text: text))
                 }
             }
-            streamID = nil; generating = false; uncertain = false; unread = !visible
+            streamID = nil; activityID = nil; generating = false; uncertain = false; unread = !visible
             approvals = []; error = payload["error"].string.isEmpty ? nil : payload["error"].string
         case "error": error = payload["message"].string; generating = false
         case "tool.start":
             let id = payload["tool_id"].string
-            if !tools.contains(where: { $0.id == id }) { tools.append(ToolCall(id: id, name: payload["name"].string, details: payload["args"].pretty)) }
+            if !tools.contains(where: { $0.id == id }) {
+                if activityID == nil {
+                    let activity = ToolActivity(id: UUID().uuidString, afterMessageID: messages.last?.id, tools: [])
+                    activityID = activity.id
+                    toolActivities.append(activity)
+                }
+                if let index = toolActivities.firstIndex(where: { $0.id == activityID }) {
+                    toolActivities[index].tools.append(ToolCall(id: id, name: payload["name"].string, details: payload["args"].pretty))
+                }
+                // Text after tool execution belongs below the activity, even if
+                // the server did not emit an interim message boundary.
+                streamID = nil
+            }
         case "tool.complete":
-            if let i = tools.firstIndex(where: { $0.id == payload["tool_id"].string }) { tools[i].complete = true; tools[i].details += "\n" + payload["result"].pretty }
+            for index in toolActivities.indices {
+                if let toolIndex = toolActivities[index].tools.firstIndex(where: { $0.id == payload["tool_id"].string }) {
+                    toolActivities[index].tools[toolIndex].complete = true
+                    toolActivities[index].tools[toolIndex].details += "\n" + payload["result"].pretty
+                    break
+                }
+            }
         case "request.cancel": approvals.removeAll { $0.id == payload["id"].string }
         default: break
         }

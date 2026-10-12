@@ -1,7 +1,73 @@
 import XCTest
+import Security
 @testable import HermesMac
 
 @MainActor final class StateTests: XCTestCase {
+    func testAutomaticRetryOnlyHandlesTransientConnectionErrors() {
+        XCTAssertTrue(HermesClient.isTransientConnectionError(URLError(.notConnectedToInternet)))
+        XCTAssertTrue(HermesClient.isTransientConnectionError(URLError(.cannotConnectToHost)))
+        XCTAssertTrue(HermesClient.isTransientConnectionError(ClientError(message: "socket unavailable", retryable: true)))
+        XCTAssertFalse(HermesClient.isTransientConnectionError(URLError(.cancelled)))
+        XCTAssertFalse(HermesClient.isTransientConnectionError(ClientError(message: "认证已失效")))
+        XCTAssertFalse(HermesClient.isTransientConnectionError(KeychainError(message: "Keychain locked")))
+    }
+
+    func testKeychainReadFailuresAreNotTreatedAsMissingCredentials() throws {
+        XCTAssertEqual(try Keychain.decode(status: errSecItemNotFound, data: nil).accessToken, "")
+        for status in [errSecAuthFailed, errSecInteractionNotAllowed, errSecUserCanceled] {
+            XCTAssertThrowsError(try Keychain.decode(status: status, data: nil)) { error in
+                XCTAssertTrue(error.localizedDescription.contains(String(status)))
+            }
+        }
+        XCTAssertThrowsError(try Keychain.decode(status: errSecSuccess, data: Data("invalid".utf8)))
+        let value = Credentials(accessToken: "test-access", refreshToken: "test-refresh")
+        let restored = try Keychain.decode(status: errSecSuccess, data: JSONEncoder().encode(value))
+        XCTAssertEqual(restored.accessToken, value.accessToken)
+        XCTAssertEqual(restored.refreshToken, value.refreshToken)
+    }
+
+    func testToolsAppearBeforeFinalReplyAndRemainInTheirTurn() {
+        let c = Conversation(key: ConversationKey(service: "local", profile: "a", storedID: "stored"))
+        c.begin("question")
+        c.appendStream("checking")
+        c.apply(type: "tool.start", payload: .object(["tool_id": .string("one"), "name": .string("search")]), visible: true)
+        c.apply(type: "tool.complete", payload: .object(["tool_id": .string("one"), "result": .string("found")]), visible: true)
+        c.apply(type: "tool.start", payload: .object(["tool_id": .string("two"), "name": .string("read")]), visible: true)
+        c.apply(type: "tool.complete", payload: .object(["tool_id": .string("two"), "result": .string("read result")]), visible: true)
+        c.appendStream("answer")
+        c.apply(type: "message.complete", payload: .object(["text": .string("final answer")]), visible: true)
+
+        XCTAssertEqual(c.messages.map(\.text), ["question", "checking", "final answer"])
+        XCTAssertEqual(c.entries.count, 4)
+        guard case .tools(let activity) = c.entries[2] else { return XCTFail("Tools must precede the final reply") }
+        XCTAssertEqual(activity.tools.map(\.name), ["search", "read"])
+        XCTAssertTrue(activity.tools.allSatisfy(\.complete))
+
+        c.begin("next question")
+        c.apply(type: "tool.start", payload: .object(["tool_id": .string("three"), "name": .string("terminal")]), visible: true)
+        c.apply(type: "message.complete", payload: .object(["text": .string("next answer")]), visible: true)
+        XCTAssertEqual(c.toolActivities.count, 2)
+        guard case .tools(let previous) = c.entries[2], case .tools(let next) = c.entries[5],
+              case .message(let reply) = c.entries[6] else { return XCTFail("Each turn must retain its tool group before its reply") }
+        XCTAssertEqual(previous.id, activity.id)
+        XCTAssertEqual(next.tools.map(\.name), ["terminal"])
+        XCTAssertEqual(reply.text, "next answer")
+    }
+
+    func testToolGroupFollowsRestoredHistoryIDs() {
+        let c = Conversation(key: ConversationKey(service: "local", profile: "a", storedID: "stored"))
+        c.begin("question")
+        c.apply(type: "tool.start", payload: .object(["tool_id": .string("one"), "name": .string("search")]), visible: true)
+        c.apply(type: "message.complete", payload: .object(["text": .string("answer")]), visible: true)
+        c.snapshot(.object(["session_id": .string("runtime")]), history: [
+            Message(id: "server-user", role: "user", text: "question"),
+            Message(id: "server-answer", role: "assistant", text: "answer")
+        ])
+        XCTAssertEqual(c.entries.count, 3)
+        guard case .tools(let activity) = c.entries[1] else { return XCTFail("Restored tools must remain before the answer") }
+        XCTAssertEqual(activity.afterMessageID, "server-user")
+    }
+
     func testStreamingCompletionAndUnknownEvents() {
         let c = Conversation(key: ConversationKey(service: "local", profile: "a", storedID: "stored"))
         c.begin("question")

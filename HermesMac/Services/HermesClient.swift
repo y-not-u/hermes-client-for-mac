@@ -38,10 +38,10 @@ import Foundation
         credentials = Credentials(sessionToken: token.trimmingCharacters(in: .whitespacesAndNewlines)); credentialsLoaded = true
         if persist { try await saveCredentials() }
     }
-    private func loadCredentials() async {
+    private func loadCredentials() async throws {
         guard !credentialsLoaded else { return }
         let account = service
-        let loaded = await Task.detached { Keychain.load(service: account) }.value
+        let loaded = try await Task.detached { try Keychain.load(service: account) }.value
         guard !credentialsLoaded else { return }
         credentials = loaded; credentialsLoaded = true
     }
@@ -55,7 +55,7 @@ import Foundation
         credentialsLoaded = true; try await saveCredentials()
     }
     func rest(_ path: String, method: String = "GET", query: [URLQueryItem] = [], body: JSON? = nil, authenticated: Bool = true, retry: Bool = true) async throws -> JSON {
-        if authenticated { await loadCredentials(); try Task.checkCancellation() }
+        if authenticated { try await loadCredentials(); try Task.checkCancellation() }
         if authenticated && !credentials.refreshToken.isEmpty && credentials.expiresAt <= Date().timeIntervalSince1970 + 30 { try await refresh() }
         var req = URLRequest(url: url(path, query: query)); req.httpMethod = method
         req.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -83,6 +83,13 @@ import Foundation
             try await self.setNativeCredentials(result)
         }
         refreshTask = task; defer { refreshTask = nil }; try await task.value
+    }
+    static func isTransientConnectionError(_ error: Error) -> Bool {
+        if let error = error as? ClientError { return error.retryable }
+        guard let error = error as? URLError else { return false }
+        return [.timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost,
+                .dnsLookupFailed, .notConnectedToInternet, .resourceUnavailable,
+                .internationalRoamingOff, .dataNotAllowed, .callIsActive].contains(error.code)
     }
     func testConnection() async throws -> JSON { try await rest("/api/status") }
     func connect() async throws {
@@ -121,7 +128,7 @@ import Foundation
             }
         }
         do { _ = try await request("client.capabilities", ["server_requests": .bool(true)]) }
-        catch { disconnect(); throw ClientError(message: "WebSocket/协议连接失败：\(error.localizedDescription)。请核对 Hermes revision 与认证配置") }
+        catch { disconnect(); throw ClientError(message: "WebSocket/协议连接失败：\(error.localizedDescription)。请核对 Hermes revision 与认证配置", retryable: Self.isTransientConnectionError(error)) }
     }
     func disconnect() {
         reader?.cancel(); reader = nil; socket?.cancel(with: .goingAway, reason: nil); socket = nil
