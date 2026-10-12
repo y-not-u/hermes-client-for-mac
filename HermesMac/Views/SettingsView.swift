@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     var store: AppStore
+    @AppStorage(ChatTypography.key) private var fontSize = ChatTypography.defaultSize
     @State private var address = ""
     @State private var token = ""
     @State private var message = ""
@@ -37,6 +38,27 @@ struct SettingsView: View {
                     }
                 }
                 .padding(.vertical, 4)
+            }
+
+            Section("文字显示") {
+                HStack {
+                    Text("聊天字号")
+                    Slider(value: $fontSize, in: ChatTypography.range, step: 0.5)
+                        .accessibilityLabel("聊天字号")
+                    Text("\(ChatTypography.size(fontSize), specifier: "%.1f") pt")
+                        .monospacedDigit()
+                        .frame(width: 58, alignment: .trailing)
+                }
+                Text("文字预览：你好，Hermes！")
+                    .font(.system(size: ChatTypography.size(fontSize)))
+                HStack {
+                    Text("即时应用于消息、代码块和输入框，并自动保存。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("恢复默认") { fontSize = ChatTypography.defaultSize }
+                        .disabled(fontSize == ChatTypography.defaultSize)
+                }
             }
 
             Section("服务配置") {
@@ -122,7 +144,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding(12)
-        .frame(width: 530, height: 490)
+        .frame(width: 530, height: 650)
         .onAppear { address = store.address }
         .onDisappear {
             loginTask?.cancel()

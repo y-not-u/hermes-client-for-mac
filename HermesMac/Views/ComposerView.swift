@@ -3,6 +3,7 @@ import AppKit
 
 struct ComposerView: View {
     @Bindable var store: AppStore
+    @AppStorage(ChatTypography.key) private var fontSize = ChatTypography.defaultSize
 
     private var isEnabled: Bool {
         store.connected && store.current?.readOnlyReason == nil
@@ -41,17 +42,17 @@ struct ComposerView: View {
                 ZStack(alignment: .topLeading) {
                     if store.draft.isEmpty {
                         Text(isEnabled ? (isRunning ? "补充要求或修改方向… (Enter 引导)" : "向 \(store.profileTitle) 发送消息… (Enter 发送)") : "当前连接不可用或处于只读状态")
-                            .font(.system(size: 13.5))
+                            .font(.system(size: ChatTypography.size(fontSize)))
                             .foregroundStyle(Color(nsColor: .placeholderTextColor))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 8)
                             .allowsHitTesting(false)
                     }
 
-                    ComposerTextView(text: $store.draft, enabled: isEnabled) {
+                    ComposerTextView(text: $store.draft, enabled: isEnabled, fontSize: ChatTypography.size(fontSize)) {
                         store.submitDraft()
                     }
-                    .frame(minHeight: 38, maxHeight: 120)
+                    .frame(minHeight: max(38, ChatTypography.size(fontSize) + 18), maxHeight: 120)
                 }
 
                 // Bottom toolbar inside card
@@ -190,6 +191,7 @@ private struct QuickChip: View {
 struct ComposerTextView: NSViewRepresentable {
     @Binding var text: String
     let enabled: Bool
+    var fontSize: CGFloat = CGFloat(ChatTypography.defaultSize)
     let onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -205,7 +207,7 @@ struct ComposerTextView: NSViewRepresentable {
         let view = SubmitTextView()
         view.isRichText = false
         view.drawsBackground = false
-        view.font = .systemFont(ofSize: 13.5)
+        view.font = .systemFont(ofSize: fontSize)
         view.textContainerInset = NSSize(width: 4, height: 6)
         view.isVerticallyResizable = true
         view.isHorizontallyResizable = false
@@ -226,6 +228,9 @@ struct ComposerTextView: NSViewRepresentable {
         // Never replace marked text while an IME owns the composition.
         if editor.string != text && !editor.hasMarkedText() {
             editor.string = text
+        }
+        if editor.font?.pointSize != fontSize {
+            editor.font = .systemFont(ofSize: fontSize)
         }
         editor.isEditable = enabled
         editor.onSubmit = onSubmit

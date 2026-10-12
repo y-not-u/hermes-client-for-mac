@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 @main struct HermesMacApp: App {
+    @AppStorage(ChatTypography.key) private var fontSize = ChatTypography.defaultSize
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var store = AppStore(onReplyCompleted: { _, profile, text in
         ReplyNotifications.shared.replyCompleted(profile: profile, text: text)
@@ -19,6 +20,16 @@ import AppKit
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("新建会话") { store.newSession() }.keyboardShortcut("n")
+            }
+            CommandMenu("显示") {
+                Button("放大字体") { fontSize = Double(ChatTypography.size(fontSize + 0.5)) }
+                    .keyboardShortcut("+", modifiers: [.command])
+                    .disabled(fontSize >= ChatTypography.range.upperBound)
+                Button("缩小字体") { fontSize = Double(ChatTypography.size(fontSize - 0.5)) }
+                    .keyboardShortcut("-", modifiers: [.command])
+                    .disabled(fontSize <= ChatTypography.range.lowerBound)
+                Button("恢复默认字号") { fontSize = ChatTypography.defaultSize }
+                    .keyboardShortcut("0", modifiers: [.command])
             }
             CommandMenu("角色") {
                 Button("下一个角色") { store.cycleProfile(1) }.keyboardShortcut("]", modifiers: [.command])

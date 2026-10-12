@@ -36,6 +36,7 @@ struct MediaPresentation {
 // MARK: - Modern Developer Code Block
 
 private struct CodeBlockView: View {
+    @AppStorage(ChatTypography.key) private var fontSize = ChatTypography.defaultSize
     let code: String
     let language: String
 
@@ -45,7 +46,7 @@ private struct CodeBlockView: View {
     }
 
     var body: some View {
-        let content = CodeContentView(code: code)
+        let content = CodeContentView(code: code, fontSize: ChatTypography.scaled(12.5, for: fontSize))
         VStack(alignment: .leading, spacing: 0) {
             // Header bar
             HStack {
@@ -90,29 +91,32 @@ private struct CodeBlockView: View {
 // SwiftUI only measures the bounded viewport, independent of code line width.
 struct CodeContentView: NSViewRepresentable {
     let code: String
+    let fontSize: CGFloat
     let documentHeight: CGFloat
     var viewportHeight: CGFloat { min(Self.maximumHeight, documentHeight) }
-    init(code: String) {
+    init(code: String, fontSize: CGFloat = 12.5) {
         self.code = code
-        documentHeight = Self.contentHeight(for: code)
+        self.fontSize = fontSize
+        documentHeight = Self.contentHeight(for: code, fontSize: fontSize)
     }
-    static let font = NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular)
     static let lineSpacing: CGFloat = 3.5
     static let inset: CGFloat = 12
     static let maximumHeight: CGFloat = 360
 
-    static func contentHeight(for code: String) -> CGFloat {
+    static func contentHeight(for code: String, fontSize: CGFloat = 12.5) -> CGFloat {
+        let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         let lines = code.reduce(1) { $1.isNewline ? $0 + 1 : $0 }
         let lineHeight = ceil(font.ascender - font.descender + font.leading)
         return CGFloat(lines) * (lineHeight + lineSpacing) + inset * 2
     }
 
-    static func viewportHeight(for code: String) -> CGFloat {
-        min(maximumHeight, contentHeight(for: code))
+    static func viewportHeight(for code: String, fontSize: CGFloat = 12.5) -> CGFloat {
+        min(maximumHeight, contentHeight(for: code, fontSize: fontSize))
     }
 
     final class Coordinator {
         var renderedCode: String?
+        var renderedFontSize: CGFloat?
     }
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -143,18 +147,19 @@ struct CodeContentView: NSViewRepresentable {
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
-        guard context.coordinator.renderedCode != code,
+        guard context.coordinator.renderedCode != code || context.coordinator.renderedFontSize != fontSize,
               let text = scroll.documentView as? NSTextView else { return }
         context.coordinator.renderedCode = code
+        context.coordinator.renderedFontSize = fontSize
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = Self.lineSpacing
         paragraph.lineBreakMode = .byClipping
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: Self.font, .paragraphStyle: paragraph,
+            .font: NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular), .paragraphStyle: paragraph,
             .foregroundColor: NSColor(calibratedRed: 0.92, green: 0.94, blue: 0.96, alpha: 1)
         ]
         let content = NSAttributedString(string: code, attributes: attributes)
-        // Measure only when the code changes, never during SwiftUI size proposals.
+        // Measure when content or typography changes, never during SwiftUI size proposals.
         let width = ceil(content.size().width) + Self.inset * 2
         let height = documentHeight
         text.textContainer?.containerSize = NSSize(width: max(1, width - Self.inset * 2), height: CGFloat.greatestFiniteMagnitude)
@@ -172,6 +177,7 @@ struct CodeContentView: NSViewRepresentable {
 // MARK: - Markdown Text Block
 
 private struct MarkdownTextBlock: View {
+    @AppStorage(ChatTypography.key) private var fontSize = ChatTypography.defaultSize
     let text: String
 
     var body: some View {
@@ -179,15 +185,15 @@ private struct MarkdownTextBlock: View {
             ForEach(Array(text.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
                 if line.hasPrefix("### ") {
                     inline(String(line.dropFirst(4)))
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: ChatTypography.scaled(14, for: fontSize), weight: .bold))
                         .padding(.top, 6)
                 } else if line.hasPrefix("## ") {
                     inline(String(line.dropFirst(3)))
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.system(size: ChatTypography.scaled(16, for: fontSize), weight: .bold))
                         .padding(.top, 8)
                 } else if line.hasPrefix("# ") {
                     inline(String(line.dropFirst(2)))
-                        .font(.system(size: 18, weight: .bold))
+                        .font(.system(size: ChatTypography.scaled(18, for: fontSize), weight: .bold))
                         .padding(.top, 10)
                 } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
                     HStack(alignment: .firstTextBaseline, spacing: 7) {
@@ -196,7 +202,7 @@ private struct MarkdownTextBlock: View {
                             .frame(width: 4.5, height: 4.5)
                             .offset(y: -1)
                         inline(String(line.dropFirst(2)))
-                            .font(.system(size: 13.5))
+                            .font(.system(size: ChatTypography.scaled(13.5, for: fontSize)))
                     }
                     .padding(.leading, 8)
                 } else if line.hasPrefix("> ") {
@@ -205,7 +211,7 @@ private struct MarkdownTextBlock: View {
                             .fill(Color.accentColor.opacity(0.7))
                             .frame(width: 3)
                         inline(String(line.dropFirst(2)))
-                            .font(.system(size: 13.5))
+                            .font(.system(size: ChatTypography.scaled(13.5, for: fontSize)))
                             .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 3)
@@ -220,7 +226,7 @@ private struct MarkdownTextBlock: View {
                     Color.clear.frame(height: 4)
                 } else {
                     inline(line)
-                        .font(.system(size: 13.5))
+                        .font(.system(size: ChatTypography.scaled(13.5, for: fontSize)))
                         .lineSpacing(2.5)
                 }
             }

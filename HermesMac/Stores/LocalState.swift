@@ -23,3 +23,18 @@ struct ServiceState: Codable {
     }
     static func draftKey(profile: String, session: String?) -> String { profile + "\u{001f}" + (session ?? "new") }
 }
+
+/// Shared, durable typography preference for conversation content and composing.
+enum ChatTypography {
+    static let key = "chatFontSize"
+    static let defaultSize = 13.5
+    static let range = 11.0...24.0
+
+    static func size(_ value: Double) -> CGFloat {
+        CGFloat(value.isFinite ? min(range.upperBound, max(range.lowerBound, value)) : defaultSize)
+    }
+
+    static func scaled(_ base: CGFloat, for value: Double) -> CGFloat {
+        base * size(value) / CGFloat(defaultSize)
+    }
+}

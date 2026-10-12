@@ -56,6 +56,48 @@ import AppKit
         XCTAssertEqual(c.messages.last?.text, "continued")
     }
 
+    func testCodeFontChangeUpdatesExistingNativeViewAndMeasurements() throws {
+        let code = String(repeating: "let answer = 42; ", count: 20) + "\nprint(answer)"
+        let hosting = NSHostingView(rootView: CodeContentView(code: code, fontSize: 12.5))
+        hosting.frame = NSRect(x: 0, y: 0, width: 500, height: 200)
+        hosting.layoutSubtreeIfNeeded()
+        func editor(in view: NSView) -> NSTextView? {
+            if let text = view as? NSTextView { return text }
+            return view.subviews.lazy.compactMap { editor(in: $0) }.first
+        }
+        let text = try XCTUnwrap(editor(in: hosting))
+        let oldWidth = text.frame.width
+        let oldHeight = text.frame.height
+        hosting.rootView = CodeContentView(code: code, fontSize: 22)
+        hosting.layoutSubtreeIfNeeded()
+        XCTAssertTrue(editor(in: hosting) === text)
+        XCTAssertEqual(text.font?.pointSize, 22)
+        XCTAssertEqual(text.string, code)
+        XCTAssertGreaterThan(text.frame.width, oldWidth)
+        XCTAssertGreaterThan(text.frame.height, oldHeight)
+        XCTAssertEqual(CodeContentView.viewportHeight(for: String(repeating: "line\n", count: 500), fontSize: 22), 360)
+    }
+
+    func testComposerFontChangePreservesDraftAndSelection() throws {
+        let draft = "中文草稿，继续编辑"
+        let hosting = NSHostingView(rootView: ComposerTextView(text: .constant(draft), enabled: true, fontSize: 13.5, onSubmit: {}))
+        hosting.frame = NSRect(x: 0, y: 0, width: 500, height: 100)
+        hosting.layoutSubtreeIfNeeded()
+        func editor(in view: NSView) -> SubmitTextView? {
+            if let text = view as? SubmitTextView { return text }
+            return view.subviews.lazy.compactMap { editor(in: $0) }.first
+        }
+        let text = try XCTUnwrap(editor(in: hosting))
+        let selection = NSRange(location: 2, length: 2)
+        text.setSelectedRange(selection)
+        hosting.rootView = ComposerTextView(text: .constant(draft), enabled: true, fontSize: 24, onSubmit: {})
+        hosting.layoutSubtreeIfNeeded()
+        XCTAssertTrue(editor(in: hosting) === text)
+        XCTAssertEqual(text.font?.pointSize, 24)
+        XCTAssertEqual(text.string, draft)
+        XCTAssertEqual(text.selectedRange(), selection)
+    }
+
     func testCodeViewportHasFiniteHeightIndependentOfLineWidth() {
         let short = CodeContentView.viewportHeight(for: "x")
         let wide = CodeContentView.viewportHeight(for: String(repeating: "x", count: 20_000))
