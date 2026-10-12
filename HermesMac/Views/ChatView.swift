@@ -257,7 +257,12 @@ struct ChatView: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 20) {
+                    // Rows change height when media loads. A lazy stack combined
+                    // with bottom anchoring can repeatedly revise its estimated
+                    // heights on macOS 15 and starve the main actor (including
+                    // the image-loading tasks). History is paged, so measure the
+                    // loaded rows directly instead.
+                    VStack(alignment: .leading, spacing: 20) {
                         if c.hasOlder {
                             HStack {
                                 Spacer()
