@@ -186,7 +186,7 @@ import Foundation
         let frame = JSON.object(fields)
         let id = frame["id"].string
         if !id.isEmpty && frame["method"].string.isEmpty {
-            if frame["error"] != .null { finish(id, .failure(ClientError(message: frame["error"]["message"].string))) }
+            if frame["error"] != .null { finish(id, .failure(ClientError(message: frame["error"]["message"].string, rpcCode: Int(frame["error"]["code"].number)))) }
             else {
                 var result = frame["result"]
                 if case .object(var object) = result { object["_responseOrdinal"] = .number(ordinal); result = .object(object) }

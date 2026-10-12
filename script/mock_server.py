@@ -22,6 +22,12 @@ class Fixture:
         self.create_delay = 0
         self.refreshes = 0
         self.tickets = 0
+        self.correction_status = 'redirected'
+        self.correction_delay = 0
+        self.correction_error = None
+        self.steer_status = 'queued'
+        self.complete_on_correction = False
+        self.drop_on_correction = False
         self.complete_on_resume = False
 
     async def control(self, request):
@@ -36,6 +42,9 @@ class Fixture:
             self.create_delay = body.get('create_delay', self.create_delay)
             self.complete_on_resume = body.get('complete_on_resume', self.complete_on_resume)
             self.session_rows = body.get('session_rows', self.session_rows)
+            for key in ('correction_status', 'correction_delay', 'correction_error', 'steer_status', 'complete_on_correction', 'drop_on_correction'):
+                if key in body:
+                    setattr(self, key, body[key])
             if body.get('large_history'):
                 self.sessions['large-history'] = {
                     'stored_session_id': 'large-history', 'session_id': 'runtime-large',
@@ -144,8 +153,27 @@ class Fixture:
                 result['message_count'] = len(result['messages'])
                 result['messages'] = []
                 result['messages_omitted'] = True
+        elif method in ('session.redirect', 'session.steer'):
+            session = next(s for s in self.sessions.values() if s['session_id'] == params['session_id'])
+            await asyncio.sleep(self.correction_delay)
+            if self.drop_on_correction:
+                await ws.close()
+                return
+            if self.correction_error is not None and method == 'session.redirect':
+                await ws.send_json({'jsonrpc': '2.0', 'id': frame['id'], 'error': {'code': self.correction_error, 'message': 'correction refused'}})
+                return
+            if self.complete_on_correction:
+                self.complete_on_correction = False
+                session['running'] = False
+                await ws.send_json({'jsonrpc': '2.0', 'method': 'event', 'params': {
+                    'session_id': session['session_id'], 'type': 'message.complete', 'payload': {'text': 'original finished'}}})
+            status = (self.correction_status if method == 'session.redirect' else self.steer_status) if session['running'] else 'rejected'
+            result = {'status': status, 'text': params['text']}
+            if status != 'rejected':
+                session.setdefault('inflight', {}).setdefault('corrections', []).append(params['text'])
         elif method == 'prompt.submit':
-            result = {'accepted': True}
+            session = next(s for s in self.sessions.values() if s['session_id'] == params['session_id'])
+            result = {'status': 'queued' if session['running'] and params.get('queued') else 'streaming'}
             session = next(s for s in self.sessions.values() if s['session_id'] == params['session_id'])
             session['running'] = True
             session['messages'].append({'role': 'user', 'content': params['text']})

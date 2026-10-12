@@ -8,10 +8,12 @@ struct ComposerView: View {
         store.connected && store.current?.readOnlyReason == nil
     }
 
+    private var isRunning: Bool { store.current?.generating == true }
+
     var body: some View {
         VStack(spacing: 8) {
             // Quick Command Chips
-            if isEnabled {
+            if isEnabled && !isRunning {
                 HStack(spacing: 8) {
                     QuickChip(title: "/status", description: "状态") {
                         store.draft = "/status"
@@ -38,7 +40,7 @@ struct ComposerView: View {
             VStack(spacing: 6) {
                 ZStack(alignment: .topLeading) {
                     if store.draft.isEmpty {
-                        Text(isEnabled ? "向 \(store.profileTitle) 发送消息… (Enter 发送)" : "当前连接不可用或处于只读状态")
+                        Text(isEnabled ? (isRunning ? "补充要求或修改方向… (Enter 引导)" : "向 \(store.profileTitle) 发送消息… (Enter 发送)") : "当前连接不可用或处于只读状态")
                             .font(.system(size: 13.5))
                             .foregroundStyle(Color(nsColor: .placeholderTextColor))
                             .padding(.horizontal, 6)
@@ -56,7 +58,7 @@ struct ComposerView: View {
                 HStack(alignment: .center) {
                     HStack(spacing: 5) {
                         KeyCap("Enter")
-                        Text("发送")
+                        Text(isRunning ? "引导" : "发送")
                             .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
 
@@ -90,7 +92,12 @@ struct ComposerView: View {
                         .help("清空输入")
                     }
 
-                    if store.current?.generating == true {
+                    if isRunning {
+                        Button("完成后发送") { store.submitDraft(queue: true) }
+                            .buttonStyle(.borderless)
+                            .font(.system(size: 11))
+                            .disabled(!store.canSend)
+                            .help("当前任务完成后，作为下一轮消息发送")
                         Button {
                             store.stopCurrent()
                         } label: {
@@ -126,7 +133,7 @@ struct ComposerView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(!store.canSend)
-                    .help(store.canSend ? "发送消息 (Enter)" : "无法发送")
+                    .help(store.canSend ? (isRunning ? "引导当前任务 (Enter)" : "发送消息 (Enter)") : "无法发送")
                 }
             }
             .padding(10)

@@ -177,22 +177,23 @@ private struct ScrollViewConfigurator: NSViewRepresentable {
 
     private func configure(from view: NSView) {
         guard let scrollView = findEnclosingScrollView(from: view) else { return }
-        scrollView.drawsBackground = false
-        scrollView.backgroundColor = .clear
-        scrollView.contentView.drawsBackground = false
-        scrollView.contentView.backgroundColor = .clear
-        scrollView.autohidesScrollers = true
-        if preferOverlay {
+        // Setting these on every SwiftUI update can invalidate layout again.
+        if scrollView.drawsBackground { scrollView.drawsBackground = false }
+        if scrollView.backgroundColor != .clear { scrollView.backgroundColor = .clear }
+        if scrollView.contentView.drawsBackground { scrollView.contentView.drawsBackground = false }
+        if scrollView.contentView.backgroundColor != .clear { scrollView.contentView.backgroundColor = .clear }
+        if !scrollView.autohidesScrollers { scrollView.autohidesScrollers = true }
+        if preferOverlay && scrollView.scrollerStyle != .overlay {
             scrollView.scrollerStyle = .overlay
         }
         if let vertical = scrollView.verticalScroller {
-            if preferOverlay {
+            if preferOverlay && vertical.scrollerStyle != .overlay {
                 vertical.scrollerStyle = .overlay
             }
             cleanScrollerLayers(vertical)
         }
         if let horizontal = scrollView.horizontalScroller {
-            if preferOverlay {
+            if preferOverlay && horizontal.scrollerStyle != .overlay {
                 horizontal.scrollerStyle = .overlay
             }
             cleanScrollerLayers(horizontal)
@@ -202,10 +203,10 @@ private struct ScrollViewConfigurator: NSViewRepresentable {
     private func cleanScrollerLayers(_ scroller: NSScroller) {
         if let imp = scroller.value(forKey: "scrollerImp") as? NSObject,
            let trackLayer = imp.value(forKey: "trackLayer") as? CALayer {
-            trackLayer.contents = nil
-            trackLayer.backgroundColor = nil
-            trackLayer.opacity = 0
-            trackLayer.isHidden = true
+            if trackLayer.contents != nil { trackLayer.contents = nil }
+            if trackLayer.backgroundColor != nil { trackLayer.backgroundColor = nil }
+            if trackLayer.opacity != 0 { trackLayer.opacity = 0 }
+            if !trackLayer.isHidden { trackLayer.isHidden = true }
         }
     }
 

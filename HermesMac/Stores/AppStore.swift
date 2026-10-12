@@ -43,7 +43,12 @@ import Observation
         return try await imageCache.image(for: request) { try await client.imageData(for: request) }
     }
     var profileTitle: String { profiles.first(where: { $0.name == selectedProfile })?.displayName ?? "Hermes" }
-    var canSend: Bool { connected && !selectedProfile.isEmpty && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !profileBusy(selectedProfile) && current?.readOnlyReason == nil && current?.loading != true && (selectedSession == nil || current != nil) }
+    var canSend: Bool {
+        connected && !selectedProfile.isEmpty && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        && !busyProfiles.contains(selectedProfile) && current?.readOnlyReason == nil && current?.loading != true
+        && (selectedSession == nil || current != nil)
+        && !conversations.values.contains { $0.key.profile == selectedProfile && ($0.uncertain || ($0.generating && $0 !== current)) }
+    }
     func profileBusy(_ profile: String) -> Bool { busyProfiles.contains(profile) || conversations.values.contains { $0.key.profile == profile && ($0.generating || $0.uncertain) } }
     func profileApproval(_ profile: String) -> Bool { conversations.values.contains { $0.key.profile == profile && !$0.approvals.isEmpty } }
     func profileUnread(_ profile: String) -> Bool { conversations.values.contains { $0.key.profile == profile && $0.unread } }
@@ -277,16 +282,23 @@ import Observation
         guard let id = c.runtimeID, !id.isEmpty else { return }; routes[id] = c.key
         for frame in earlyFrames.removeValue(forKey: id) ?? [] { route(frame) }
     }
-    func submitDraft() {
+    func submitDraft(queue: Bool = false) {
         let origin = navigation
-        Task { guard origin == navigation else { return }; await send() }
+        Task { guard origin == navigation else { return }; await send(queue: queue) }
     }
     func stopCurrent() {
         guard let c = current else { return }
         Task { await interrupt(conversation: c) }
     }
-    func send() async {
+    func send(queue: Bool = false) async {
         guard canSend, let client else { return }
+        // Seal already received text before inserting a correction in the transcript.
+        flushFrames()
+        guard canSend else { return }
+        if let c = current, c.generating {
+            await sendFollowUp(c, client: client, queue: queue)
+            return
+        }
         let profile = selectedProfile; let text = draft; let epoch = generation; let startingSession = selectedSession; let originNavigation = navigation
         busyProfiles.insert(profile); defer { if epoch == generation { busyProfiles.remove(profile) } }
         do {
@@ -320,6 +332,74 @@ import Observation
             do { _ = try await client.request("prompt.submit", ["session_id": .string(runtime), "profile": .string(profile), "text": .string(text)]) }
             catch { guard epoch == generation else { return }; c.uncertain = true; c.error = "发送结果未知：\(error.localizedDescription)。请重新查询状态，不会自动重发。" }
         } catch { guard epoch == generation else { return }; self.error = error.localizedDescription }
+    }
+    private func flushFrames() {
+        flushTask?.cancel(); flushTask = nil
+        let frames = buffered; buffered = []; frames.forEach { route($0) }
+    }
+    private func sendFollowUp(_ c: Conversation, client: HermesClient, queue: Bool) async {
+        guard let runtime = c.runtimeID else { return }
+        let text = draft; let epoch = generation; let origin = navigation
+        let profile = c.key.profile
+        busyProfiles.insert(profile)
+        defer { if epoch == generation { busyProfiles.remove(profile) } }
+        let messageID = c.appendFollowUp(text, splitReply: !queue)
+        draft = ""
+        let params: [String: JSON] = ["session_id": .string(runtime), "profile": .string(profile), "text": .string(text)]
+        do {
+            var status = ""
+            var preserveReply = queue
+            if !queue {
+                for method in ["session.redirect", "session.steer"] {
+                    do {
+                        let result = try await client.request(method, params)
+                        guard epoch == generation else { return }
+                        flushFrames()
+                        let response = result["status"].string
+                        if response == "redirected" || response == "queued" {
+                            preserveReply = method == "session.redirect" && response == "queued"
+                            status = method == "session.steer" ? "已提交引导，等待执行边界" : (response == "queued" ? "已排队，等待下一轮" : "已提交改向")
+                            break
+                        }
+                        guard response == "rejected" else { throw ClientError(message: "服务返回了未知提交状态") }
+                    } catch let error as ClientError where error.rpcCode == -32601 || error.rpcCode == 4010 {
+                        // Only a definite refusal permits trying another method.
+                    }
+                }
+            }
+            guard epoch == generation else { return }
+            if status.isEmpty {
+                var queuedParams = params; queuedParams["queued"] = .bool(true)
+                let result = try await client.request("prompt.submit", queuedParams)
+                guard epoch == generation else { return }
+                flushFrames()
+                switch result["status"].string {
+                case "queued": status = "已排队，等待下一轮"
+                case "streaming": status = "已提交下一轮"
+                default: throw ClientError(message: "服务返回了未知排队状态")
+                }
+                preserveReply = result["status"].string == "queued"
+                c.moveFollowUpToEnd(messageID)
+            }
+            if preserveReply { c.moveFollowUpToEnd(messageID) }
+            c.setDelivery(messageID, status, preserveReply: preserveReply)
+        } catch {
+            guard epoch == generation else { return }
+            if let failure = error as? ClientError, failure.rpcCode != nil {
+                flushFrames()
+                c.setDelivery(messageID, "提交失败", preserveReply: true)
+                c.error = "补充消息未提交：\(failure.localizedDescription)"
+                let key = LocalState.draftKey(profile: profile, session: c.key.storedID)
+                if (local.state(service).drafts[key] ?? "").isEmpty {
+                    local.update(service) { $0.drafts[key] = text }
+                    if navigation == origin && current === c && draft.isEmpty { draft = text }
+                }
+            } else {
+                c.setDelivery(messageID, "提交结果未知")
+                c.uncertain = true
+                c.error = "补充消息发送结果未知：\(error.localizedDescription)。请重新查询状态，不会自动重发。"
+            }
+        }
     }
     func interrupt(conversation: Conversation? = nil) async {
         guard let c = conversation ?? current, let runtime = c.runtimeID, let client, c.key.service == client.service, conversations[c.key] === c else { return }

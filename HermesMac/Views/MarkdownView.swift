@@ -45,6 +45,7 @@ private struct CodeBlockView: View {
     }
 
     var body: some View {
+        let content = CodeContentView(code: code)
         VStack(alignment: .leading, spacing: 0) {
             // Header bar
             HStack {
@@ -70,18 +71,10 @@ private struct CodeBlockView: View {
             .background(Color(red: 0.15, green: 0.16, blue: 0.19))
 
             // Code Content
-            ScrollView(.horizontal, showsIndicators: true) {
-                Text(code)
-                    .font(.system(size: 12.5, design: .monospaced))
-                    .lineSpacing(3.5)
-                    .foregroundStyle(Color(red: 0.92, green: 0.94, blue: 0.96))
-                    .padding(12)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .textSelection(.enabled)
-            }
-            .cleanScrollBars()
-            .environment(\.colorScheme, .dark)
-            .background(Color(red: 0.10, green: 0.11, blue: 0.13))
+            content
+                .frame(height: content.viewportHeight)
+                .frame(maxWidth: .infinity)
+                .background(Color(red: 0.10, green: 0.11, blue: 0.13))
         }
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .overlay {
@@ -89,6 +82,90 @@ private struct CodeBlockView: View {
                 .strokeBorder(Color.white.opacity(0.1), lineWidth: 0.8)
         }
         .shadow(color: Color.black.opacity(0.12), radius: 3, y: 1.5)
+    }
+}
+
+// A lazy transcript must receive a finite height without asking a nested SwiftUI
+// ScrollView to derive its ideal size from unwrapped text. AppKit owns scrolling;
+// SwiftUI only measures the bounded viewport, independent of code line width.
+struct CodeContentView: NSViewRepresentable {
+    let code: String
+    let documentHeight: CGFloat
+    var viewportHeight: CGFloat { min(Self.maximumHeight, documentHeight) }
+    init(code: String) {
+        self.code = code
+        documentHeight = Self.contentHeight(for: code)
+    }
+    static let font = NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular)
+    static let lineSpacing: CGFloat = 3.5
+    static let inset: CGFloat = 12
+    static let maximumHeight: CGFloat = 360
+
+    static func contentHeight(for code: String) -> CGFloat {
+        let lines = code.reduce(1) { $1.isNewline ? $0 + 1 : $0 }
+        let lineHeight = ceil(font.ascender - font.descender + font.leading)
+        return CGFloat(lines) * (lineHeight + lineSpacing) + inset * 2
+    }
+
+    static func viewportHeight(for code: String) -> CGFloat {
+        min(maximumHeight, contentHeight(for: code))
+    }
+
+    final class Coordinator {
+        var renderedCode: String?
+    }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.drawsBackground = false
+        scroll.contentView.drawsBackground = false
+        scroll.hasHorizontalScroller = true
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        scroll.horizontalScroller = TransparentOverlayScroller()
+        scroll.verticalScroller = TransparentOverlayScroller()
+        let text = NSTextView()
+        text.isEditable = false
+        text.isSelectable = true
+        text.isRichText = false
+        text.drawsBackground = false
+        text.isHorizontallyResizable = true
+        text.isVerticallyResizable = true
+        text.textContainerInset = NSSize(width: Self.inset, height: Self.inset)
+        text.textContainer?.lineFragmentPadding = 0
+        text.textContainer?.widthTracksTextView = false
+        text.textContainer?.heightTracksTextView = false
+        scroll.documentView = text
+        scroll.setAccessibilityLabel("代码，可选择和滚动")
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard context.coordinator.renderedCode != code,
+              let text = scroll.documentView as? NSTextView else { return }
+        context.coordinator.renderedCode = code
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = Self.lineSpacing
+        paragraph.lineBreakMode = .byClipping
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: Self.font, .paragraphStyle: paragraph,
+            .foregroundColor: NSColor(calibratedRed: 0.92, green: 0.94, blue: 0.96, alpha: 1)
+        ]
+        let content = NSAttributedString(string: code, attributes: attributes)
+        // Measure only when the code changes, never during SwiftUI size proposals.
+        let width = ceil(content.size().width) + Self.inset * 2
+        let height = documentHeight
+        text.textContainer?.containerSize = NSSize(width: max(1, width - Self.inset * 2), height: CGFloat.greatestFiniteMagnitude)
+        text.textStorage?.setAttributedString(content)
+        text.frame = NSRect(x: 0, y: 0, width: max(1, width), height: height)
+        scroll.hasVerticalScroller = height > Self.maximumHeight
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        let width = proposal.width.flatMap { $0.isFinite ? max(0, $0) : nil } ?? 0
+        return CGSize(width: width, height: viewportHeight)
     }
 }
 

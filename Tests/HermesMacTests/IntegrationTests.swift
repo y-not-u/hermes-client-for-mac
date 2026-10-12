@@ -58,6 +58,111 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         ])])
     }
 
+    func testRedirectPreservesPartialReplyAndContinuesBelowCorrection() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "original"; await store.send()
+        let c = try XCTUnwrap(store.current)
+        try await emit(c.key.storedID, type: "message.delta", text: "partial before")
+        try await eventually { c.messages.last?.text == "partial before" }
+        store.draft = "change direction"
+        XCTAssertTrue(store.canSend)
+        await store.send()
+        XCTAssertTrue(c.generating)
+        XCTAssertEqual(store.draft, "")
+        XCTAssertEqual(c.messages.last?.deliveryStatus, "已提交改向")
+        try await emit(c.key.storedID, type: "message.delta", text: "new answer")
+        try await emit(c.key.storedID, type: "message.complete", text: "corrected answer")
+        try await eventually { !c.generating }
+        XCTAssertEqual(c.messages.map(\.text), ["original", "partial before", "change direction", "corrected answer"])
+        let stats = try await fixture(["action": .string("stats")])
+        XCTAssertEqual(stats["requests"].array.filter { $0["method"].string == "prompt.submit" }.count, 1)
+    }
+
+    func testUnsupportedRedirectFallsBackToSteer() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "original"; await store.send()
+        _ = try await fixture(["action": .string("configure"), "correction_error": .number(4010)])
+        store.draft = "guidance"; await store.send()
+        XCTAssertEqual(store.current?.messages.last?.deliveryStatus, "已提交引导，等待执行边界")
+        let stats = try await fixture(["action": .string("stats")])
+        XCTAssertEqual(stats["requests"].array.suffix(2).map { $0["method"].string }, ["session.redirect", "session.steer"])
+        XCTAssertFalse(store.current?.uncertain == true)
+    }
+
+    func testQueueKeepsActiveReplyAndForcesBackendQueue() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "original"; await store.send()
+        let c = try XCTUnwrap(store.current)
+        try await emit(c.key.storedID, type: "message.delta", text: "partial")
+        try await eventually { c.messages.last?.text == "partial" }
+        store.draft = "next turn"; await store.send(queue: true)
+        try await emit(c.key.storedID, type: "message.complete", text: "original answer")
+        try await eventually { !c.generating }
+        XCTAssertEqual(c.messages.map(\.text), ["original", "original answer", "next turn"])
+        let stats = try await fixture(["action": .string("stats")])
+        XCTAssertEqual(stats["requests"].array.last?["params"]["queued"], .bool(true))
+        XCTAssertFalse(stats["requests"].array.contains { $0["method"].string == "session.redirect" })
+    }
+
+    func testCorrectionAtCompletionBecomesSingleNextTurn() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "original"; await store.send()
+        _ = try await fixture(["action": .string("configure"), "complete_on_correction": .bool(true)])
+        store.draft = "follow up"; await store.send()
+        let stats = try await fixture(["action": .string("stats")])
+        XCTAssertEqual(stats["requests"].array.filter { $0["method"].string == "prompt.submit" }.count, 2)
+        XCTAssertEqual(store.current?.messages.filter { $0.text == "follow up" }.count, 1)
+        XCTAssertEqual(store.current?.messages.first { $0.text == "follow up" }?.deliveryStatus, "已提交下一轮")
+    }
+
+    func testCorrectionRefusalRestoresDraftWithoutRetry() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "original"; await store.send()
+        _ = try await fixture(["action": .string("configure"), "correction_error": .number(4004)])
+        store.draft = "retry manually"; await store.send()
+        XCTAssertEqual(store.draft, "retry manually")
+        XCTAssertEqual(store.current?.messages.last?.deliveryStatus, "提交失败")
+        let stats = try await fixture(["action": .string("stats")])
+        XCTAssertEqual(stats["requests"].array.last?["method"].string, "session.redirect")
+    }
+
+    func testCorrectionDisconnectDoesNotResubmit() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "original"; await store.send()
+        let c = try XCTUnwrap(store.current)
+        _ = try await fixture(["action": .string("configure"), "drop_on_correction": .bool(true)])
+        store.draft = "unknown"; await store.send()
+        XCTAssertTrue(c.uncertain)
+        XCTAssertEqual(c.messages.last?.deliveryStatus, "提交结果未知")
+        let stats = try await fixture(["action": .string("stats")])
+        XCTAssertEqual(stats["requests"].array.filter { $0["method"].string == "prompt.submit" }.count, 1)
+        XCTAssertFalse(stats["requests"].array.contains { $0["method"].string == "session.steer" })
+    }
+
+    func testCorrectionStaysWithOriginalConversationAfterNavigation() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "original"; await store.send()
+        let c = try XCTUnwrap(store.current)
+        _ = try await fixture(["action": .string("configure"), "correction_delay": .number(0.2)])
+        store.draft = "correction"
+        let sending = Task { await store.send() }
+        try await eventually { c.messages.last?.text == "correction" }
+        await store.selectProfile("b"); store.draft = "unsent B"
+        await sending.value
+        XCTAssertEqual(store.draft, "unsent B")
+        XCTAssertEqual(c.messages.last?.deliveryStatus, "已提交改向")
+        await store.selectProfile("a")
+        store.newSession(); store.draft = "another session"
+        XCTAssertFalse(store.canSend)
+    }
+
     func testSessionListAndSearchExcludeCronBeforePagination() async throws {
         let (store, client, defaults, name) = try await prepare()
         defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }

@@ -28,11 +28,17 @@
 | --- | --- |
 | `session.create` | `profile`, `source=dashboard`, `close_on_disconnect=false` |
 | `session.resume` | `profile`, 持久 `session_id`, `omit_messages=true`；只获取运行状态、inflight 和待处理请求，不传输完整历史 |
-| `prompt.submit` | `profile`, 运行时 `session_id`, `text` |
+| `prompt.submit` | `profile`, 运行时 `session_id`, `text`；运行中的“完成后发送”额外传 `queued=true` |
+| `session.redirect` | `profile`, 运行时 `session_id`, `text`，改向当前回合；工具执行中后端转为 steer |
+| `session.steer` | 相同参数，在下一工具边界注入补充要求 |
 | `session.interrupt` | `profile`, 运行时 `session_id`，只停止目标任务 |
 | 服务端 `approval` 请求 | 卡片显示服务给出的选项；JSON-RPC response 使用原请求 ID 和 `result.choice` |
 
 源码参考中的 `idempotency_key`（create）和 `inline_images`（resume）是可选扩展参数，但实测 Hermes 0.21.5 严格拒绝这些额外 RPC 参数。客户端统一省略它们，保持同一套请求；没有失败后切换协议或自动再次 create 的逻辑，也不依赖幂等键进行重试。
+
+运行中的当前会话可以继续发送，其他同 profile 会话仍受互斥限制。默认尝试 `session.redirect`；仅收到 `rejected`、方法不存在（`-32601`）或不支持能力（`4010`）时尝试 `session.steer`，两者明确拒绝后以 `prompt.submit(queued=true)` 提交下一轮。显式“完成后发送”直接走后者。严格拒绝扩展参数的老服务会显示提交失败并保留可恢复草稿，不退回可能中断任务的普通 submit。超时、断线、未知响应不自动重发。消息旁的“已提交改向/引导”表示服务接收，不能保证模型已经采用。
+
+客户端在提交改向前分隔原流式回答，之后的回答显示在补充消息下；排队保持当前回答的流式归属。`inflight.corrections` 用于恢复运行中补充消息。RPC 错误保留数值 code，仅以明确的拒绝判断后续接口尝试。
 
 持久 ID 与运行时 ID 分开维护。会话归属键为 `(service, profile, storedID)`；事件 `params.session_id` 通过运行时路由表归属该键。切换界面不改变路由。每次连接建立新 generation，旧连接和迟到 REST 回包不能修改新服务状态。绑定运行时 ID 前到达的事件有数量受限的缓冲。
 

@@ -449,6 +449,11 @@ private struct MessageRowView: View {
                             .foregroundStyle(.secondary)
                     }
 
+                    if let status = message.deliveryStatus {
+                        Text(status)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
                     MarkdownView(text: message.text)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)

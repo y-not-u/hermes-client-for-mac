@@ -30,6 +30,7 @@ import Observation
     var hasOlder = false
     private var streamID: String?
     private var activityID: String?
+    private var followUpStreams: [String: (stream: String?, activity: String?)] = [:]
     init(key: ConversationKey) { self.key = key }
     func snapshot(_ json: JSON, history: [Message]? = nil) {
         let previousMessages = messages
@@ -45,10 +46,26 @@ import Observation
         generating = json["running"].bool || json["inflight"]["streaming"].bool
         uncertain = false; readOnlyReason = nil
         let inflight = json["inflight"]
-        if !inflight["user"].string.isEmpty, messages.last?.text != inflight["user"].string {
+        let corrections = inflight["corrections"].array.map(\.string).filter { !$0.isEmpty }
+        // Local optimistic corrections must follow the restored assistant checkpoint.
+        let localCorrections = messages.filter { $0.role == "user" && $0.deliveryStatus != nil && corrections.contains($0.text) }
+        let localIDs = Set(localCorrections.map(\.id))
+        messages.removeAll { localIDs.contains($0.id) }
+        let hasOriginal = corrections.isEmpty ? messages.last?.text == inflight["user"].string
+            : messages.contains { $0.role == "user" && $0.text == inflight["user"].string }
+        if !inflight["user"].string.isEmpty, !hasOriginal {
             messages.append(Message(role: "user", text: inflight["user"].string))
         }
         if !inflight["assistant"].string.isEmpty { appendStream(inflight["assistant"].string) }
+        var remainingLocal = localCorrections
+        for text in corrections {
+            if let index = remainingLocal.firstIndex(where: { $0.text == text }) {
+                messages.append(remainingLocal.remove(at: index))
+            } else if !messages.contains(where: { $0.role == "user" && $0.text == text }) {
+                messages.append(Message(role: "user", text: text))
+            }
+        }
+        if !corrections.isEmpty { streamID = nil }
         for frame in json["open_requests"].array where frame["method"].string == "approval" {
             approvals.append(Approval(id: frame["id"].string, params: frame["params"]))
         }
@@ -77,6 +94,26 @@ import Observation
     func begin(_ text: String) {
         streamID = nil; activityID = nil; error = nil; generating = true; unread = false
         messages.append(Message(role: "user", text: text))
+    }
+    func appendFollowUp(_ text: String, splitReply: Bool) -> String {
+        let previous = (stream: streamID, activity: activityID)
+        if splitReply { streamID = nil; activityID = nil }
+        error = nil
+        var message = Message(role: "user", text: text)
+        followUpStreams[message.id] = previous
+        message.deliveryStatus = "正在提交…"
+        messages.append(message)
+        return message.id
+    }
+    func setDelivery(_ id: String, _ status: String, preserveReply: Bool = false) {
+        if let previous = followUpStreams.removeValue(forKey: id), preserveReply, generating, streamID == nil {
+            streamID = previous.stream; activityID = previous.activity
+        }
+        if let index = messages.firstIndex(where: { $0.id == id }) { messages[index].deliveryStatus = status }
+    }
+    func moveFollowUpToEnd(_ id: String) {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
+        let message = messages.remove(at: index); messages.append(message)
     }
     func apply(type: String, payload: JSON, visible: Bool) {
         switch type {

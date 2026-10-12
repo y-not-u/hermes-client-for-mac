@@ -5,6 +5,80 @@ import AppKit
 @testable import HermesMac
 
 @MainActor final class StateTests: XCTestCase {
+    func testRefusedCorrectionKeepsOriginalReplyStream() {
+        let c = Conversation(key: ConversationKey(service: "local", profile: "a", storedID: "stored"))
+        c.begin("question"); c.appendStream("partial")
+        let id = c.appendFollowUp("correction", splitReply: true)
+        c.setDelivery(id, "提交失败", preserveReply: true)
+        c.apply(type: "message.complete", payload: .object(["text": .string("original answer")]), visible: true)
+        XCTAssertEqual(c.messages.map(\.text), ["question", "original answer", "correction"])
+    }
+
+    func testResumeRebuildsInflightCorrectionsWithoutDuplicatingLocalInput() {
+        let c = Conversation(key: ConversationKey(service: "local", profile: "a", storedID: "stored"))
+        c.begin("question")
+        _ = c.appendFollowUp("correction", splitReply: true)
+        c.snapshot(.object(["session_id": .string("runtime"), "messages_omitted": .bool(true), "running": .bool(true),
+            "inflight": .object(["user": .string("question"), "assistant": .string("partial"), "corrections": .array([.string("correction"), .string("another note")])])]))
+        XCTAssertEqual(c.messages.map(\.text), ["question", "partial", "correction", "another note"])
+        c.appendStream("continued")
+        XCTAssertEqual(c.messages.last?.text, "continued")
+    }
+
+    func testCodeViewportHasFiniteHeightIndependentOfLineWidth() {
+        let short = CodeContentView.viewportHeight(for: "x")
+        let wide = CodeContentView.viewportHeight(for: String(repeating: "x", count: 20_000))
+        XCTAssertEqual(short, wide)
+        XCTAssertGreaterThan(short, 24)
+        XCTAssertEqual(CodeContentView.contentHeight(for: "a\r\nb"), CodeContentView.contentHeight(for: "a\nb"))
+        XCTAssertEqual(CodeContentView.viewportHeight(for: String(repeating: "line\n", count: 500)), 360)
+    }
+
+    func testLazyTranscriptLayoutWithWideCodeAndStreamingFences() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 600),
+                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let longLine = String(repeating: "let long_name = 123; ", count: 300)
+        let blocks = "Before\n```swift\n" + longLine + "\n" + String(repeating: "line\n", count: 80) + "```\nAfter\n```sh\necho ok\n```"
+        func transcript(_ text: String) -> some View {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 20) {
+                    ForEach(0..<3) { _ in
+                        HStack(alignment: .top, spacing: 10) {
+                            Color.clear.frame(width: 28, height: 28)
+                            MarkdownView(text: text).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity)
+            }
+            .cleanScrollBars()
+        }
+        let hosting = NSHostingView(rootView: transcript(blocks))
+        window.contentView = hosting
+        let start = Date()
+        for index in 0..<12 {
+            let width: CGFloat = index.isMultiple(of: 2) ? 320 : 900
+            hosting.frame = NSRect(x: 0, y: 0, width: width, height: 600)
+            hosting.rootView = transcript(blocks + "\n```python\n" + String(repeating: "x", count: index * 100))
+            hosting.layoutSubtreeIfNeeded()
+            XCTAssertTrue(hosting.fittingSize.height.isFinite)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(start), 8, "Lazy layout should settle promptly during resize and streaming")
+        var codeScrolls: [NSScrollView] = []
+        func collect(_ view: NSView) {
+            if let scroll = view as? NSScrollView, scroll.documentView is NSTextView { codeScrolls.append(scroll) }
+            view.subviews.forEach(collect)
+        }
+        collect(hosting)
+        XCTAssertFalse(codeScrolls.isEmpty, "Code should use native scroll views")
+        XCTAssertTrue(codeScrolls.contains { ($0.documentView?.frame.width ?? 0) > 900 })
+        XCTAssertTrue(codeScrolls.allSatisfy { $0.frame.height <= 360 })
+        XCTAssertTrue(codeScrolls.allSatisfy { ($0.documentView as? NSTextView)?.isSelectable == true })
+    }
+
     func testAutomaticRetryOnlyHandlesTransientConnectionErrors() {
         XCTAssertTrue(HermesClient.isTransientConnectionError(URLError(.notConnectedToInternet)))
         XCTAssertTrue(HermesClient.isTransientConnectionError(URLError(.cannotConnectToHost)))

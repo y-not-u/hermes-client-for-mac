@@ -51,6 +51,7 @@ struct Message: Identifiable, Equatable {
     let id: String
     let role: String
     var text: String
+    var deliveryStatus: String?
     init(id: String = UUID().uuidString, role: String, text: String) { self.id = id; self.role = role; self.text = text }
     init(_ json: JSON) {
         let row = json["_row_id"] == .null ? json["id"] : json["_row_id"]
@@ -86,4 +87,4 @@ enum ConversationEntry: Identifiable {
 }
 struct Approval: Identifiable { let id: String; let params: JSON }
 struct ConversationKey: Hashable, Codable, Sendable { let service: String; let profile: String; let storedID: String }
-struct ClientError: LocalizedError { let message: String; var retryable = false; var httpStatus: Int? = nil; var errorDescription: String? { message } }
+struct ClientError: LocalizedError { let message: String; var retryable = false; var httpStatus: Int? = nil; var rpcCode: Int? = nil; var errorDescription: String? { message } }
