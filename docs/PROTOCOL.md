@@ -8,8 +8,8 @@
 | --- | --- |
 | GET `/api/status` | REST 连通性、`auth_required` 与 `auth_flows` 能力 |
 | GET `/api/profiles` | `profiles` 列表，按服务保存显示顺序 |
-| GET `/api/sessions?profile=…` | 当前 profile 的历史，40 条分页 |
-| GET `/api/sessions/search?profile=…&q=…` | 搜索当前 profile 历史 |
+| GET `/api/sessions?profile=…&exclude_sources=cron` | 当前 profile 的历史，排除定时任务运行会话，40 条分页 |
+| GET `/api/sessions/search?profile=…&q=…&exclude_sources=cron` | 搜索当前 profile 历史，排除定时任务运行会话 |
 | GET `/api/sessions/{storedID}/messages?profile=…` | 首屏读取最新历史、按需读取更早记录，每页 20 条，`inline_images=false` |
 | GET `/api/fs/read-data-url?path=…&profile=…&session_id=…` | 按助手回答中的 `MEDIA:` 路径读取图片，返回 `dataUrl`；使用持久会话 ID 和现有认证 |
 | PATCH `/api/sessions/{storedID}` | JSON body 含 `profile` 和 `title`，重命名 |

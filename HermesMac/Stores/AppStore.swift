@@ -189,7 +189,8 @@ import Observation
         let offset = more ? (sessions[profile]?.count ?? 0) : 0
         do {
             let path = query.isEmpty ? "/api/sessions" : "/api/sessions/search"
-            let result = try await client.rest(path, query: [URLQueryItem(name: "profile", value: profile), URLQueryItem(name: "limit", value: "40"), URLQueryItem(name: "offset", value: String(offset)), URLQueryItem(name: "order", value: "recent"), URLQueryItem(name: "q", value: query)])
+            // Filter at the source so cron runs do not consume list/search page slots.
+            let result = try await client.rest(path, query: [URLQueryItem(name: "profile", value: profile), URLQueryItem(name: "limit", value: "40"), URLQueryItem(name: "offset", value: String(offset)), URLQueryItem(name: "order", value: "recent"), URLQueryItem(name: "q", value: query), URLQueryItem(name: "exclude_sources", value: "cron")])
             guard epoch == generation, listRevision[profile] == revision else { return }
             let rows = result[query.isEmpty ? "sessions" : "results"].array.map(SessionSummary.init)
             if more { sessions[profile, default: []].append(contentsOf: rows.filter { row in !(sessions[profile] ?? []).contains(where: { $0.id == row.id }) }) }

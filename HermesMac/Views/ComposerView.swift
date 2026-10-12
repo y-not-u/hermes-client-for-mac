@@ -11,7 +11,7 @@ struct ComposerView: View {
     var body: some View {
         VStack(spacing: 8) {
             // Quick Command Chips
-            if store.draft.isEmpty && isEnabled {
+            if isEnabled {
                 HStack(spacing: 8) {
                     QuickChip(title: "/status", description: "状态") {
                         store.draft = "/status"
@@ -28,6 +28,10 @@ struct ComposerView: View {
                     Spacer()
                 }
                 .padding(.horizontal, 2)
+                // Keep the row's height stable while the user edits their draft.
+                .opacity(store.draft.isEmpty ? 1 : 0)
+                .allowsHitTesting(store.draft.isEmpty)
+                .accessibilityHidden(!store.draft.isEmpty)
             }
 
             // Input Card

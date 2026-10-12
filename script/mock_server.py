@@ -14,6 +14,8 @@ class Fixture:
         self.sessions = {}
         self.requests = []
         self.history_reads = []
+        self.session_reads = []
+        self.session_rows = []
         self.responses = []
         self.counter = 0
         self.native = False
@@ -33,6 +35,7 @@ class Fixture:
             self.native = body.get('native', self.native)
             self.create_delay = body.get('create_delay', self.create_delay)
             self.complete_on_resume = body.get('complete_on_resume', self.complete_on_resume)
+            self.session_rows = body.get('session_rows', self.session_rows)
             if body.get('large_history'):
                 self.sessions['large-history'] = {
                     'stored_session_id': 'large-history', 'session_id': 'runtime-large',
@@ -60,7 +63,7 @@ class Fixture:
                     session['messages'].append({'role': 'assistant', 'content': text})
             for ws in list(self.sockets):
                 await ws.send_json(frame)
-        return web.json_response({'requests': self.requests, 'responses': self.responses, 'history_reads': self.history_reads,
+        return web.json_response({'requests': self.requests, 'responses': self.responses, 'history_reads': self.history_reads, 'session_reads': self.session_reads,
             'refreshes': self.refreshes, 'tickets': self.tickets})
 
     async def rest(self, request):
@@ -79,12 +82,19 @@ class Fixture:
         if path == '/api/profiles':
             return web.json_response({'profiles': [{'name': p, 'display_name': p.upper()} for p in ['a', 'b']]})
         if path in ['/api/sessions', '/api/sessions/search']:
+            self.session_reads.append({'path': path, **dict(request.query)})
             profile = request.query.get('profile')
             rows = [{'id': sid, 'title': sid} for sid, s in self.sessions.items() if s['profile'] == profile]
+            rows.extend(r for r in self.session_rows if r['profile'] == profile)
             if profile == 'a':
                 rows.append({'id': 'cli-readonly', 'title': 'CLI history'})
+            excluded = request.query.get('exclude_sources', '').split(',')
+            rows = [r for r in rows if r.get('source') not in excluded]
             if path.endswith('search'):
                 rows = [r for r in rows if request.query.get('q', '') in r['title']]
+            offset = int(request.query.get('offset', 0))
+            limit = int(request.query.get('limit', 40))
+            rows = rows[offset:offset + limit]
             return web.json_response({'results' if path.endswith('search') else 'sessions': rows})
         if path.endswith('/messages'):
             sid = request.match_info['sid']

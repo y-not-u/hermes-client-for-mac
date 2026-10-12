@@ -58,6 +58,32 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         ])])
     }
 
+    func testSessionListAndSearchExcludeCronBeforePagination() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        var rows: [JSON] = (0..<45).flatMap { index in
+            [JSON.object(["id": .string("cron-\(index)"), "title": .string("match scheduled run"), "source": .string("cron"), "profile": .string("a")]),
+             JSON.object(["id": .string("chat-\(index)"), "title": .string("match cron discussion"), "source": .string("cli"), "profile": .string("a")])]
+        }
+        rows.append(.object(["id": .string("other-profile"), "title": .string("match other"), "source": .string("cli"), "profile": .string("b")]))
+        _ = try await fixture(["action": .string("configure"), "session_rows": .array(rows)])
+
+        await store.loadSessions(profile: "a")
+        XCTAssertEqual(store.sessions["a"]?.map(\.id), (0..<40).map { "chat-\($0)" })
+        XCTAssertEqual(store.listHasMore["a"], true)
+        await store.loadSessions(profile: "a", more: true)
+        XCTAssertEqual(store.sessions["a"]?.map(\.id), (0..<45).map { "chat-\($0)" } + ["cli-readonly"])
+        XCTAssertEqual(store.listHasMore["a"], false)
+
+        await store.loadSessions(profile: "a", query: "match")
+        XCTAssertEqual(store.sessions["a"]?.map(\.id), (0..<40).map { "chat-\($0)" })
+        let stats = try await fixture(["action": .string("stats")])
+        let reads = stats["session_reads"].array
+        XCTAssertTrue(reads.allSatisfy { $0["exclude_sources"].string == "cron" })
+        XCTAssertEqual(reads.dropLast().last?["offset"].string, "40")
+        XCTAssertEqual(reads.last?["path"].string, "/api/sessions/search")
+    }
+
     func testColdStartAutomaticallyRetriesAndRestoresSavedNativeLogin() async throws {
         guard !address.isEmpty else { throw XCTSkip("Run script/test.sh to enable protocol integration tests") }
         _ = try await fixture(["action": .string("reset")])
