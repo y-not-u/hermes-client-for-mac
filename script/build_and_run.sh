@@ -19,6 +19,10 @@ if [ ! -x "$APP_BUNDLE/Contents/MacOS/HermesCredentialHelper" ]; then
   echo "Build produced an app without HermesCredentialHelper. Regenerate the project with python3 script/generate_project.py and rebuild." >&2
   exit 1
 fi
+if [ "$MODE" != "--build" ]; then
+  # Refresh this bundle's registration so Dock and notifications see icon updates.
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP_BUNDLE"
+fi
 case "$MODE" in
   --build) exit 0 ;;
   run) /usr/bin/open -n "$APP_BUNDLE" ;;

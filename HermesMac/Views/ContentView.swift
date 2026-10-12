@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct ContentView: View {
     var store: AppStore
@@ -30,22 +31,10 @@ struct ProfileRail: View {
         VStack(spacing: 12) {
             // App Brand Logo
             VStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.accentColor, Color(red: 0.5, green: 0.2, blue: 0.85)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .shadow(color: Color.accentColor.opacity(0.3), radius: 4, y: 2)
-
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.white)
-                }
-                .frame(width: 38, height: 38)
+                Image(nsImage: NSApp.applicationIconImage ?? NSImage(named: NSImage.applicationIconName) ?? NSImage())
+                .resizable()
+                .scaledToFit()
+                .frame(width: 44, height: 44)
                 .accessibilityLabel("Hermes")
                 .padding(.top, 14)
 

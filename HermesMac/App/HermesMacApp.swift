@@ -12,7 +12,7 @@ import AppKit
 
     var body: some Scene {
         WindowGroup("Hermes", id: "main") {
-            ContentView(store: store).frame(minWidth: 800, minHeight: 540)
+            ContentView(store: store).tint(Color.accentColor).frame(minWidth: 800, minHeight: 540)
                 .task { if !store.connected && !store.connecting { await store.connect() } }
         }
         .defaultSize(width: 1120, height: 760)
@@ -27,7 +27,7 @@ import AppKit
                 Button("重新连接") { Task { await store.connect() } }.keyboardShortcut("r", modifiers: [.command, .shift])
             }
         }
-        Settings { SettingsView(store: store) }
+        Settings { SettingsView(store: store).tint(Color.accentColor) }
     }
 }
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -37,6 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let icon = NSImage(contentsOf: url) {
+            NSApp.applicationIconImage = icon
+        }
         ReplyNotifications.shared.start()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)

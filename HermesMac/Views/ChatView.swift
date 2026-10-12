@@ -1,9 +1,12 @@
 import SwiftUI
+import AppKit
 
 struct ChatView: View {
     var store: AppStore
     @State private var imagePreview: ImagePreview?
     @State private var pendingInitialScroll: ConversationKey?
+    @State private var isAtBottom = true
+    @State private var isBottomButtonHovered = false
 
     private var currentSessionTitle: String {
         if let selected = store.selectedSession,
@@ -255,135 +258,193 @@ struct ChatView: View {
                 .padding(.top, 10)
             }
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    // Rows change height when media loads. A lazy stack combined
-                    // with bottom anchoring can repeatedly revise its estimated
-                    // heights on macOS 15 and starve the main actor (including
-                    // the image-loading tasks). History is paged, so measure the
-                    // loaded rows directly instead.
-                    VStack(alignment: .leading, spacing: 20) {
-                        if c.hasOlder {
-                            HStack {
-                                Spacer()
-                                Button("加载更早消息") {
-                                    Task { await store.loadOlder(c) }
+            GeometryReader { viewport in
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        // Rows change height when media loads. A lazy stack combined
+                        // with bottom anchoring can repeatedly revise its estimated
+                        // heights on macOS 15 and starve the main actor (including
+                        // the image-loading tasks). History is paged, so measure the
+                        // loaded rows directly instead.
+                        VStack(alignment: .leading, spacing: 20) {
+                            if c.hasOlder {
+                                HStack {
+                                    Spacer()
+                                    Button("加载更早消息") {
+                                        Task { await store.loadOlder(c) }
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .disabled(c.loading)
+                                    Spacer()
                                 }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                .disabled(c.loading)
-                                Spacer()
+                                .padding(.top, 8)
                             }
-                            .padding(.top, 8)
-                        }
 
-                        ForEach(transcriptRows(c)) { row in
-                            MessageRowView(
-                                message: row.message,
-                                profileName: store.selectedProfile,
-                                profileTitle: store.profileTitle,
-                                tools: row.tools,
-                                isRunning: c.generating,
-                                conversation: c.key,
-                                store: store,
-                                previewImage: { file, filename in imagePreview = ImagePreview(file: file, filename: filename) }
-                            )
-                        }
-
-                        ForEach(c.approvals) { approval in
-                            ApprovalCard(approval: approval, conversation: c, store: store)
-                        }
-
-                        if let error = c.error {
-                            HStack(spacing: 8) {
-                                Image(systemName: "exclamationmark.circle.fill")
-                                    .foregroundStyle(.orange)
-                                Text(error)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(.orange)
-                                    .textSelection(.enabled)
-                            }
-                            .padding(10)
-                            .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        }
-
-                        if c.generating {
-                            HStack(spacing: 10) {
-                                ProfileAvatar(
-                                    name: store.selectedProfile,
-                                    displayName: store.profileTitle,
-                                    size: 24,
-                                    cornerRadius: 7
+                            ForEach(transcriptRows(c)) { row in
+                                MessageRowView(
+                                    message: row.message,
+                                    profileName: store.selectedProfile,
+                                    profileTitle: store.profileTitle,
+                                    tools: row.tools,
+                                    isRunning: c.generating,
+                                    conversation: c.key,
+                                    store: store,
+                                    previewImage: { file, filename in imagePreview = ImagePreview(file: file, filename: filename) }
                                 )
-
-                                HStack(spacing: 6) {
-                                    ProgressView()
-                                        .controlSize(.mini)
-                                    Text("正在生成回复…")
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(Color.secondary.opacity(0.06), in: Capsule())
                             }
-                        }
 
-                        Color.clear.frame(height: 1).id("bottom")
+                            ForEach(c.approvals) { approval in
+                                ApprovalCard(approval: approval, conversation: c, store: store)
+                            }
+
+                            if let error = c.error {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "exclamationmark.circle.fill")
+                                        .foregroundStyle(.orange)
+                                    Text(error)
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.orange)
+                                        .textSelection(.enabled)
+                                }
+                                .padding(10)
+                                .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+
+                            if c.generating {
+                                HStack(spacing: 10) {
+                                    ProfileAvatar(
+                                        name: store.selectedProfile,
+                                        displayName: store.profileTitle,
+                                        size: 24,
+                                        cornerRadius: 7
+                                    )
+
+                                    HStack(spacing: 6) {
+                                        ProgressView()
+                                            .controlSize(.mini)
+                                        Text("正在生成回复…")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(Color.secondary.opacity(0.06), in: Capsule())
+                                }
+                            }
+
+                            Color.clear.frame(height: 21)
+                                .id("bottom")
+                                .background {
+                                    GeometryReader { geometry in
+                                        Color.clear.preference(
+                                            key: ConversationBottomPreferenceKey.self,
+                                            value: geometry.frame(in: .named("conversationScroll")).maxY
+                                        )
+                                    }
+                                }
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.top, 20)
+                        .frame(maxWidth: 860)
+                        .frame(maxWidth: .infinity)
                     }
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 20)
-                    .frame(maxWidth: 860)
-                    .frame(maxWidth: .infinity)
-                }
-                .defaultScrollAnchor(.bottom)
-                .cleanScrollBars()
-                .overlay(alignment: .top) {
-                    if c.loading {
-                        ProgressView()
-                            .controlSize(.small)
-                            .padding(8)
-                            .background(.regularMaterial, in: Capsule())
-                            .padding(.top, 8)
-                            .allowsHitTesting(false)
+                    .coordinateSpace(name: "conversationScroll")
+                    .onPreferenceChange(ConversationBottomPreferenceKey.self) { bottom in
+                        // The bottom marker includes the transcript's trailing spacing.
+                        isAtBottom = bottom <= viewport.size.height + 4
                     }
-                }
-                .onChange(of: c.key, initial: true) { _, key in
-                    pendingInitialScroll = c.loading ? key : nil
-                    proxy.scrollTo("bottom", anchor: .bottom)
-                }
-                .onChange(of: c.loading) { _, loading in
-                    // Only finish the opening scroll; paging older history must
-                    // leave the reader at their current position.
-                    if !loading && pendingInitialScroll == c.key {
-                        pendingInitialScroll = nil
+                    .defaultScrollAnchor(.bottom)
+                    .cleanScrollBars()
+                    .overlay(alignment: .top) {
+                        if c.loading {
+                            ProgressView()
+                                .controlSize(.small)
+                                .padding(8)
+                                .background(.regularMaterial, in: Capsule())
+                                .padding(.top, 8)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .overlay(alignment: .bottom) {
+                        if !isAtBottom {
+                            Button {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    proxy.scrollTo("bottom", anchor: .bottom)
+                                }
+                            } label: {
+                                Image(systemName: "arrow.down")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(Color.accentColor)
+                                    .frame(width: 32, height: 32)
+                                    .background(.regularMaterial, in: Circle())
+                                    .overlay(Circle().strokeBorder(Color.secondary.opacity(0.2)))
+                                    .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("滚动到底部")
+                            .help("滚动到底部")
+                            .onHover { hovered in
+                                guard hovered != isBottomButtonHovered else { return }
+                                isBottomButtonHovered = hovered
+                                if hovered { NSCursor.pointingHand.push() }
+                                else { NSCursor.pop() }
+                            }
+                            .onDisappear {
+                                if isBottomButtonHovered {
+                                    NSCursor.pop()
+                                    isBottomButtonHovered = false
+                                }
+                            }
+                            .padding(16)
+                        }
+                    }
+                    .onChange(of: c.key, initial: true) { _, key in
+                        isAtBottom = true
+                        pendingInitialScroll = c.loading ? key : nil
                         proxy.scrollTo("bottom", anchor: .bottom)
                     }
-                }
-                .onChange(of: c.messages.count) { _, _ in
-                    if c.generating && !c.loading && imagePreview == nil {
-                        proxy.scrollTo("bottom", anchor: .bottom)
-                    }
-                }
-                .onChange(of: c.tools.count) { _, _ in
-                    if !c.loading && imagePreview == nil {
-                        withAnimation(.easeOut(duration: 0.2)) {
+                    .onChange(of: c.loading) { _, loading in
+                        // Only finish the opening scroll; paging older history must
+                        // leave the reader at their current position.
+                        if !loading && pendingInitialScroll == c.key {
+                            pendingInitialScroll = nil
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
                     }
-                }
-                .onChange(of: c.messages.last?.text) { _, _ in
-                    if c.generating && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
-                }
-                .onChange(of: c.generating) { _, running in
-                    if !running && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
-                }
-                .onChange(of: c.approvals.count) { _, _ in
-                    if !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
+                    .onChange(of: c.messages.count) { _, _ in
+                        if isAtBottom && c.generating && !c.loading && imagePreview == nil {
+                            proxy.scrollTo("bottom", anchor: .bottom)
+                        }
+                    }
+                    .onChange(of: c.tools.count) { _, _ in
+                        if isAtBottom && !c.loading && imagePreview == nil {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                proxy.scrollTo("bottom", anchor: .bottom)
+                            }
+                        }
+                    }
+                    .onChange(of: c.messages.last?.text) { _, _ in
+                        if isAtBottom && c.generating && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
+                    }
+                    .onChange(of: c.generating) { _, running in
+                        if isAtBottom && !running && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
+                    }
+                    .onChange(of: c.approvals.count) { _, _ in
+                        if isAtBottom && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
+                    }
                 }
             }
             .id(c.key)
         }
+    }
+}
+
+private struct ConversationBottomPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
@@ -541,13 +602,13 @@ private struct ToolCallGroup: View {
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: latest.complete ? "checkmark.circle.fill" : "gearshape.2.fill")
-                            .foregroundStyle(latest.complete ? Color.green : Color.orange)
+                            .foregroundStyle(latest.complete ? Color.accentColor : Color.orange)
                         Text(latest.name)
                             .font(.system(size: 12, weight: .medium, design: .monospaced))
                             .lineLimit(1)
                         Text(latest.complete ? "执行完成" : "执行中…")
                             .font(.system(size: 10))
-                            .foregroundStyle(latest.complete ? Color.green : Color.orange)
+                            .foregroundStyle(latest.complete ? Color.accentColor : Color.orange)
                         Spacer(minLength: 8)
                         Text("\(tools.count) 次工具调用")
                             .font(.system(size: 11))
@@ -626,7 +687,7 @@ private struct ToolCallRow: View {
                 HStack(spacing: 8) {
                     Image(systemName: isComplete ? "checkmark.circle.fill" : "gearshape.2.fill")
                         .font(.system(size: 12))
-                        .foregroundStyle(isComplete ? Color.green : Color.orange)
+                        .foregroundStyle(isComplete ? Color.accentColor : Color.orange)
 
                     Text(title)
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
@@ -634,10 +695,10 @@ private struct ToolCallRow: View {
 
                     Text(isComplete ? "执行完成" : "执行中…")
                         .font(.system(size: 10))
-                        .foregroundStyle(isComplete ? Color.green : Color.orange)
+                        .foregroundStyle(isComplete ? Color.accentColor : Color.orange)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1.5)
-                        .background((isComplete ? Color.green : Color.orange).opacity(0.1), in: Capsule())
+                        .background((isComplete ? Color.accentColor : Color.orange).opacity(0.1), in: Capsule())
 
                     Spacer()
 

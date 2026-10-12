@@ -79,17 +79,17 @@ public struct ConnectionStatusBadge: View {
                     .controlSize(.mini)
             } else {
                 Circle()
-                    .fill(connected ? Color.green : Color.orange)
+                    .fill(connected ? Color.accentColor : Color.orange)
                     .frame(width: 6, height: 6)
             }
             Text(text)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(connecting ? .secondary : (connected ? Color.green : Color.orange))
+                .foregroundStyle(connecting ? .secondary : (connected ? Color.accentColor : Color.orange))
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background(
-            (connecting ? Color.secondary : (connected ? Color.green : Color.orange)).opacity(0.1),
+            (connecting ? Color.secondary : (connected ? Color.accentColor : Color.orange)).opacity(0.1),
             in: Capsule()
         )
     }
@@ -154,11 +154,11 @@ public struct CopyButton: View {
                 }
                 .font(.system(size: 11, weight: .medium))
             }
-            .foregroundStyle(copied ? Color.green : (isDark ? Color(red: 0.75, green: 0.80, blue: 0.88) : Color.secondary))
+            .foregroundStyle(copied ? Color.accentColor : (isDark ? Color(red: 0.75, green: 0.80, blue: 0.88) : Color.secondary))
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background(
-                copied ? Color.green.opacity(0.18) : (isDark ? Color.white.opacity(0.08) : Color.primary.opacity(0.04)),
+                copied ? Color.accentColor.opacity(0.18) : (isDark ? Color.white.opacity(0.08) : Color.primary.opacity(0.04)),
                 in: RoundedRectangle(cornerRadius: 5, style: .continuous)
             )
         }

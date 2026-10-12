@@ -5,6 +5,7 @@ import hashlib
 root = Path(__file__).resolve().parent.parent
 uid = lambda s: hashlib.sha1(s.encode()).hexdigest()[:24].upper()
 files = sorted((root/'HermesMac').rglob('*.swift'))
+resources = sorted((root/'HermesMac').glob('*.xcassets'))
 objects = []
 def obj(name, body):
     objects.append(f'{uid(name)} = {{ {body} }};')
@@ -12,17 +13,22 @@ for file in files:
     p = str(file.relative_to(root))
     obj(p, f'isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "{p}"; sourceTree = "<group>";')
     obj(p+'build', f'isa = PBXBuildFile; fileRef = {uid(p)};')
+for resource in resources:
+    p = str(resource.relative_to(root))
+    obj(p, f'isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "{p}"; sourceTree = "<group>";')
+    obj(p+'build', f'isa = PBXBuildFile; fileRef = {uid(p)};')
 obj('product', 'isa = PBXFileReference; explicitFileType = wrapper.application; path = HermesMac.app; sourceTree = BUILT_PRODUCTS_DIR;')
 obj('products', f'isa = PBXGroup; children = ({uid("product")}); name = Products; sourceTree = "<group>";')
-obj('root', f'isa = PBXGroup; children = ({",".join(uid(str(f.relative_to(root))) for f in files)},{uid("products")}); sourceTree = "<group>";')
+obj('root', f'isa = PBXGroup; children = ({",".join(uid(str(f.relative_to(root))) for f in files + resources)},{uid("products")}); sourceTree = "<group>";')
 obj('sources', f'isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ({",".join(uid(str(f.relative_to(root))+"build") for f in files)}); runOnlyForDeploymentPostprocessing = 0;')
 obj('frameworks', 'isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;')
-obj('resources', 'isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;')
+obj('resources', f'isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = ({",".join(uid(str(f.relative_to(root))+"build") for f in resources)}); runOnlyForDeploymentPostprocessing = 0;')
 obj('credential-helper', 'isa = PBXShellScriptBuildPhase; buildActionMask = 2147483647; files = (); inputPaths = ("$(SRCROOT)/script/build_credential_helper.sh", "$(SRCROOT)/Tools/CredentialHelper/main.swift", "$(SRCROOT)/HermesMac/Services/Keychain.swift"); name = "Build stable credential helper"; outputPaths = ("$(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/HermesCredentialHelper"); runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/bash; shellScript = "\\\"$SRCROOT/script/build_credential_helper.sh\\\"";')
 for kind in ['project','target']:
     for config in ['Debug','Release']:
         settings = 'MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_VERSION = 5.0; CLANG_ENABLE_MODULES = YES; '
         if kind == 'target':
+            settings += 'ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor; '
             settings += 'PRODUCT_NAME = HermesMac; PRODUCT_BUNDLE_IDENTIFIER = com.hermes.mac; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = HermesMac/Info.plist; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity"; CODE_SIGN_STYLE = Automatic; ENABLE_HARDENED_RUNTIME = YES; '
             if config == 'Debug':
                 settings = settings.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual; CODE_SIGN_IDENTITY = "HermesMac Local Development"; ENABLE_DEBUG_DYLIB = NO;')

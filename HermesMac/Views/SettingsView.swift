@@ -16,7 +16,7 @@ struct SettingsView: View {
                 HStack(spacing: 14) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(LinearGradient(colors: [Color.accentColor, Color.purple], startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .fill(LinearGradient(colors: [Color.accentColor, Color.blue.opacity(0.75)], startPoint: .topLeading, endPoint: .bottomTrailing))
                         Image(systemName: "sparkles")
                             .font(.system(size: 20, weight: .bold))
                             .foregroundStyle(.white)
