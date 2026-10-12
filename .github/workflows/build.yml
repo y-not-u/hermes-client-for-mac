@@ -33,7 +33,11 @@ jobs:
           ./script/test.sh
 
       - name: Build Application (Release)
+        # The helper authenticates its parent using the signing certificate.
+        # Ad hoc signing cannot satisfy that requirement.
+        # No stored certificate or secrets are needed for this disposable identity.
         run: |
+          ./script/setup_ci_signing.sh
           xcodebuild -project HermesMac.xcodeproj \
             -scheme HermesMac \
             -configuration Release \
@@ -41,13 +45,22 @@ jobs:
             ARCHS="arm64 x86_64" \
             ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY=- \
+            CODE_SIGN_IDENTITY="HermesMac Local Development" \
             build
+
+      - name: Remove CI Signing Keychain
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/hermes-signing.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/hermes-signing.keychain-db"
+          fi
 
       - name: Verify Application
         run: |
           codesign --verify --strict --verbose=2 build/Build/Products/Release/HermesMac.app
+          codesign --verify --strict --verbose=2 build/Build/Products/Release/HermesMac.app/Contents/MacOS/HermesCredentialHelper
           lipo build/Build/Products/Release/HermesMac.app/Contents/MacOS/HermesMac -verify_arch arm64 x86_64
+          lipo build/Build/Products/Release/HermesMac.app/Contents/MacOS/HermesCredentialHelper -verify_arch arm64 x86_64
 
       - name: Package HermesMac.app
         run: |
