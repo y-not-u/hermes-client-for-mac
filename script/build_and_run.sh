@@ -20,8 +20,8 @@ if [ ! -x "$APP_BUNDLE/Contents/MacOS/HermesCredentialHelper" ]; then
   exit 1
 fi
 if [ "$MODE" != "--build" ]; then
-  # Refresh this bundle's registration so Dock and notifications see icon updates.
-  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP_BUNDLE"
+  # Notifications resolve icons by bundle ID; old builds can shadow this bundle.
+  python3 "$ROOT_DIR/script/register_app.py" "$APP_BUNDLE"
 fi
 case "$MODE" in
   --build) exit 0 ;;
