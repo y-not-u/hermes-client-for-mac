@@ -19,6 +19,9 @@ import Observation
     var approvals: [Approval] = []
     var generating = false
     var uncertain = false
+    var queryingStatus = false
+    var statusQueryResult: String?
+    private(set) var recoverableMessageID: String?
     var readOnlyReason: String?
     var error: String?
     var unread = false
@@ -45,7 +48,7 @@ import Observation
             : Message.visibleHistory(json["messages"].array))
         approvals = []; streamID = nil
         generating = json["running"].bool || json["inflight"]["streaming"].bool
-        uncertain = false; readOnlyReason = nil
+        uncertain = false; readOnlyReason = nil; recoverableMessageID = nil
         let inflight = json["inflight"]
         let corrections = inflight["corrections"].array.map(\.string).filter { !$0.isEmpty }
         // Local optimistic corrections must follow the restored assistant checkpoint.
@@ -74,7 +77,14 @@ import Observation
         if wasUncertain, let sent = previousMessages.last(where: { $0.role == "user" }), !messages.contains(where: { $0.role == "user" && $0.text == sent.text }) {
             messages = previousMessages
             uncertain = true
-            error = "恢复的历史未确认上次发送，已保留本地显示内容。请检查服务端历史或新建会话；不会自动重发。"
+            if !generating, history != nil {
+                recoverableMessageID = sent.id
+                error = "服务端当前未在生成，但历史中未找到上次消息。可取回到输入框，检查后手动发送。"
+            } else if generating {
+                error = "服务端仍在生成，上次消息尚未确认。请等待回复完成后再查询。"
+            } else {
+                error = "未能读取服务端历史，暂时无法确认上次消息。请稍后重新查询。"
+            }
         }
         historyBacklog = Array(messages.dropLast(100)); messages = Array(messages.suffix(100))
         // History responses can replace local UUIDs with server row IDs.
@@ -87,6 +97,15 @@ import Observation
             toolActivities[index].afterMessageID = restored.id
         }
         if !generating { activityID = nil }
+    }
+    func recoverUnconfirmedMessage() -> String? {
+        guard uncertain, !generating, !loading, !queryingStatus,
+              let id = recoverableMessageID,
+              let index = messages.firstIndex(where: { $0.id == id }) else { return nil }
+        messages[index].deliveryStatus = "发送未确认 · 已取回到输入框"
+        let text = messages[index].text
+        recoverableMessageID = nil; uncertain = false; error = nil; statusQueryResult = nil
+        return text
     }
     func appendStream(_ text: String) {
         if let streamID, let i = messages.firstIndex(where: { $0.id == streamID }) { messages[i].text += text }

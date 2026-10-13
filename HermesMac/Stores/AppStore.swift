@@ -242,10 +242,22 @@ import AppKit
         do {
             let result = try await historyPage(c, client: client)
             guard epoch == generation else { return }
-            let rows = result["messages"].array
+            var rows = result["messages"].array
+            // Tool records consume history page slots. When a send is uncertain,
+            // look beyond the latest page before concluding its user text is absent.
+            if c.uncertain, let sent = c.messages.last(where: { $0.role == "user" }) {
+                var pageCount = rows.count
+                while pageCount == historyPageSize, rows.count < historyPageSize * 10,
+                      !Message.visibleHistory(rows).contains(where: { $0.role == "user" && $0.text == sent.text }) {
+                    let older = try await historyPage(c, client: client, offset: rows.count)["messages"].array
+                    guard epoch == generation else { return }
+                    pageCount = older.count
+                    rows.insert(contentsOf: older, at: 0)
+                }
+            }
             history = Message.visibleHistory(rows)
             c.historyOffset = rows.count
-            c.hasOlder = rows.count == historyPageSize
+            c.hasOlder = rows.count >= historyPageSize && rows.count % historyPageSize == 0
             c.historyBacklog = []
         } catch {
             guard epoch == generation else { return }
@@ -292,7 +304,22 @@ import AppKit
             c.messages.insert(contentsOf: Message.visibleHistory(rows).filter { !existing.contains($0.id) }, at: 0)
         } catch { c.error = error.localizedDescription }
     }
-    func retryResume() async { if let c = current, let client { c.readOnlyReason = nil; await resume(c, client: client, epoch: generation) } }
+    func retryResume() async {
+        guard let c = current, let client, connected, !c.loading, !c.queryingStatus else { return }
+        let epoch = generation
+        c.queryingStatus = true; c.statusQueryResult = nil
+        defer { c.queryingStatus = false }
+        c.readOnlyReason = nil
+        await resume(c, client: client, epoch: epoch)
+        guard epoch == generation else { return }
+        if c.uncertain {
+            c.statusQueryResult = "已查询，仍无法确认。" + (c.error ?? "请稍后重试或检查服务端历史。")
+        }
+    }
+    func recoverUnconfirmedMessage() {
+        guard connected, let c = current, let text = c.recoverUnconfirmedMessage() else { return }
+        draft = draft.isEmpty ? text : draft + "\n\n" + text
+    }
     private func bind(_ c: Conversation) {
         guard let id = c.runtimeID, !id.isEmpty else { return }; routes[id] = c.key
         for frame in earlyFrames.removeValue(forKey: id) ?? [] { route(frame) }

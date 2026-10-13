@@ -206,12 +206,13 @@ struct ChatView: View {
 
                     Spacer()
 
-                    Button("重试恢复") {
+                    Button(c.queryingStatus ? "恢复中…" : "重试恢复") {
                         Task { await store.retryResume() }
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .tint(.orange)
+                    .disabled(!store.connected || c.loading || c.queryingStatus)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
@@ -227,17 +228,32 @@ struct ChatView: View {
                         .font(.system(size: 13))
                         .foregroundStyle(.orange)
 
-                    Text("状态待确认，请查询服务端后再发送。")
+                    Text(c.queryingStatus ? "正在查询服务端状态…" : (c.statusQueryResult ?? c.error ?? "状态待确认，请查询服务端后再发送。"))
                         .font(.system(size: 12))
+                        .textSelection(.enabled)
 
                     Spacer()
 
-                    Button("查询状态") {
+                    if c.queryingStatus {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+
+                    if c.recoverableMessageID != nil {
+                        Button("取回到输入框") {
+                            store.recoverUnconfirmedMessage()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(!store.connected || c.loading || c.queryingStatus)
+                    }
+
+                    Button(c.queryingStatus ? "查询中…" : "查询状态") {
                         Task { await store.retryResume() }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .disabled(!store.connected)
+                    .disabled(!store.connected || c.loading || c.queryingStatus)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
@@ -269,13 +285,14 @@ struct ChatView: View {
                                 .padding(.top, 8)
                             }
 
-                            ForEach(transcriptRows(c)) { row in
+                            let rows = transcriptRows(c)
+                            ForEach(rows) { row in
                                 MessageRowView(
                                     message: row.message,
                                     profileName: store.selectedProfile,
                                     profileTitle: store.profileTitle,
                                     tools: row.tools,
-                                    isRunning: c.generating,
+                                    isRunning: c.generating && row.id == rows.last?.id,
                                     conversation: c.key,
                                     store: store,
                                     previewImage: { file, filename in imagePreview = ImagePreview(file: file, filename: filename) }
@@ -286,7 +303,7 @@ struct ChatView: View {
                                 ApprovalCard(approval: approval, conversation: c, store: store)
                             }
 
-                            if let error = c.error {
+                            if let error = c.error, !c.uncertain {
                                 HStack(spacing: 8) {
                                     Image(systemName: "exclamationmark.circle.fill")
                                         .foregroundStyle(.orange)
@@ -299,25 +316,40 @@ struct ChatView: View {
                                 .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                             }
 
-                            if c.generating {
-                                HStack(spacing: 10) {
+                            if c.generating, rows.last?.message.role != "assistant" {
+                                HStack(alignment: .top, spacing: 10) {
                                     ProfileAvatar(
                                         name: store.selectedProfile,
                                         displayName: store.profileTitle,
-                                        size: 24,
-                                        cornerRadius: 7
+                                        size: 28,
+                                        cornerRadius: 8
                                     )
+                                    .padding(.top, 2)
 
-                                    HStack(spacing: 6) {
-                                        ProgressView()
-                                            .controlSize(.mini)
-                                        Text("正在生成回复…")
-                                            .font(.system(size: 12))
-                                            .foregroundStyle(.secondary)
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        HStack(spacing: 8) {
+                                            Text(store.profileTitle)
+                                                .font(.system(size: 13, weight: .semibold))
+
+                                            Text("AI 助手")
+                                                .font(.system(size: 9.5, weight: .medium))
+                                                .foregroundStyle(.secondary)
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 1.5)
+                                                .background(Color.secondary.opacity(0.08), in: Capsule())
+                                        }
+
+                                        HStack(spacing: 6) {
+                                            ProgressView()
+                                                .controlSize(.mini)
+                                            Text("正在生成回复…")
+                                                .font(.system(size: 12))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(Color.secondary.opacity(0.06), in: Capsule())
                                     }
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 5)
-                                    .background(Color.secondary.opacity(0.06), in: Capsule())
                                 }
                             }
 
@@ -570,6 +602,17 @@ private struct MessageRowView: View {
                         MarkdownView(text: message.text, media: MediaPresentation(
                             conversation: conversation, messageID: message.id, store: store, preview: previewImage
                         ))
+                    } else if isRunning && (tools.isEmpty || tools.allSatisfy(\.complete)) {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.mini)
+                            Text("正在生成回复…")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.secondary.opacity(0.06), in: Capsule())
                     }
                 }
             }

@@ -31,6 +31,7 @@ class Fixture:
         self.complete_on_correction = False
         self.drop_on_correction = False
         self.complete_on_resume = False
+        self.resume_delay = 0
 
     async def control(self, request):
         body = await request.json()
@@ -43,6 +44,7 @@ class Fixture:
             self.native = body.get('native', self.native)
             self.create_delay = body.get('create_delay', self.create_delay)
             self.complete_on_resume = body.get('complete_on_resume', self.complete_on_resume)
+            self.resume_delay = body.get('resume_delay', self.resume_delay)
             self.session_rows = body.get('session_rows', self.session_rows)
             self.session_write_error = body.get('session_write_error', self.session_write_error)
             for key in ('correction_status', 'correction_delay', 'correction_error', 'steer_status', 'complete_on_correction', 'drop_on_correction'):
@@ -58,6 +60,9 @@ class Fixture:
         elif action == 'drop':
             for ws in list(self.sockets):
                 await ws.close()
+        elif action == 'append_tools':
+            self.sessions[body['stored_id']]['messages'].extend(
+                {'role': 'tool', 'content': f'tool-{i}'} for i in range(body['count']))
         elif action == 'emit':
             stored = body['stored_id']
             session = self.sessions[stored]
@@ -159,6 +164,7 @@ class Fixture:
             self.sessions[sid] = result
             await asyncio.sleep(self.create_delay)
         elif method == 'session.resume':
+            await asyncio.sleep(self.resume_delay)
             sid = params['session_id']
             if sid == 'cli-readonly':
                 await ws.send_json({'jsonrpc': '2.0', 'id': frame['id'], 'error': {'code': -32000, 'message': 'history cannot be resumed'}})

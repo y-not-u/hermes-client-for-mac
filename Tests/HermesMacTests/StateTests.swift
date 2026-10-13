@@ -257,6 +257,23 @@ import AppKit
         XCTAssertTrue(c.generating)
         XCTAssertEqual(c.approvals.map(\.id), ["approval"])
     }
+    func testUnconfirmedMessageCannotBeRecoveredWhileServerIsRunning() {
+        let c = Conversation(key: ConversationKey(service: "local", profile: "a", storedID: "stored"))
+        c.begin("unconfirmed"); c.uncertain = true
+        c.snapshot(.object(["session_id": .string("runtime"), "running": .bool(true)]), history: [])
+        XCTAssertTrue(c.uncertain)
+        XCTAssertNil(c.recoverableMessageID)
+        XCTAssertNil(c.recoverUnconfirmedMessage())
+    }
+
+    func testUnconfirmedMessageRequiresAuthoritativeHistoryForRecovery() {
+        let c = Conversation(key: ConversationKey(service: "local", profile: "a", storedID: "stored"))
+        c.begin("unconfirmed"); c.uncertain = true
+        c.snapshot(.object(["session_id": .string("runtime"), "messages": .array([])]))
+        XCTAssertTrue(c.uncertain)
+        XCTAssertNil(c.recoverableMessageID)
+        XCTAssertNil(c.recoverUnconfirmedMessage())
+    }
     func testMetadataOnlySnapshotPreservesHistoryAndReplacesPartialStream() {
         let c = Conversation(key: ConversationKey(service: "local", profile: "a", storedID: "stored"))
         c.begin("question")

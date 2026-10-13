@@ -398,6 +398,54 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         })
     }
 
+    func testStatusQueryConfirmsUserBeyondLatestToolPage() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "confirmed before tool records"; await store.send()
+        let c = try XCTUnwrap(store.current)
+        try await emit(c.key.storedID, type: "message.complete", text: "done")
+        try await eventually { !c.generating }
+        _ = try await fixture(["action": .string("append_tools"), "stored_id": .string(c.key.storedID), "count": .number(25)])
+        _ = try await fixture(["action": .string("configure"), "resume_delay": .number(0.2)])
+        c.uncertain = true
+        let querying = Task { await store.retryResume() }
+        try await eventually { c.queryingStatus }
+        await store.retryResume()
+        await querying.value
+        XCTAssertFalse(c.queryingStatus)
+        XCTAssertFalse(c.uncertain)
+        XCTAssertNil(c.statusQueryResult)
+        XCTAssertTrue(c.messages.contains { $0.text == "confirmed before tool records" })
+        let stats = try await fixture(["action": .string("stats")])
+        XCTAssertEqual(stats["requests"].array.filter { $0["method"].string == "session.resume" }.count, 1)
+        XCTAssertEqual(stats["requests"].array.filter { $0["method"].string == "prompt.submit" }.count, 1)
+        XCTAssertEqual(stats["history_reads"].array.map { $0["offset"].string }, ["0", "20"])
+    }
+
+    func testUnconfirmedIdleMessageCanBeRecoveredWithoutResending() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "original"; await store.send()
+        let c = try XCTUnwrap(store.current)
+        try await emit(c.key.storedID, type: "message.complete", text: "done")
+        try await eventually { !c.generating }
+        c.begin("unconfirmed message"); c.uncertain = true
+        store.draft = "existing draft"
+        await store.retryResume()
+        XCTAssertTrue(c.uncertain)
+        XCTAssertNotNil(c.statusQueryResult)
+        XCTAssertNotNil(c.recoverableMessageID)
+        XCTAssertFalse(store.canSend)
+        store.recoverUnconfirmedMessage()
+        XCTAssertEqual(store.draft, "existing draft\n\nunconfirmed message")
+        XCTAssertFalse(c.uncertain)
+        XCTAssertTrue(store.canSend)
+        store.recoverUnconfirmedMessage()
+        XCTAssertEqual(store.draft, "existing draft\n\nunconfirmed message")
+        let stats = try await fixture(["action": .string("stats")])
+        XCTAssertEqual(stats["requests"].array.filter { $0["method"].string == "prompt.submit" }.count, 1)
+    }
+
     func testDisconnectReattachesWithoutResubmittingAndInterrupts() async throws {
         let (store, client, defaults, name) = try await prepare()
         defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }

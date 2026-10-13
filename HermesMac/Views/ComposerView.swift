@@ -94,47 +94,42 @@ struct ComposerView: View {
                     }
 
                     if isRunning {
-                        Button("完成后发送") { store.submitDraft(queue: true) }
-                            .buttonStyle(.borderless)
-                            .font(.system(size: 11))
-                            .disabled(!store.canSend)
-                            .help("当前任务完成后，作为下一轮消息发送")
                         Button {
                             store.stopCurrent()
                         } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "stop.fill")
-                                    .font(.system(size: 9))
-                                Text("停止")
-                                    .font(.system(size: 11, weight: .medium))
+                            ZStack {
+                                Circle()
+                                    .fill(Color.primary)
+                                    .frame(width: 28, height: 28)
+                                    .shadow(color: Color.black.opacity(0.12), radius: 2, y: 1)
+
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(Color(nsColor: .controlBackgroundColor))
                             }
-                            .foregroundStyle(.red)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.red.opacity(0.12), in: Capsule())
                         }
                         .buttonStyle(.plain)
                         .disabled(!store.connected)
                         .help("停止当前生成")
-                    }
+                    } else {
+                        Button {
+                            store.submitDraft()
+                        } label: {
+                            ZStack {
+                                Circle()
+                                    .fill(store.canSend ? Color.accentColor : Color.secondary.opacity(0.15))
+                                    .frame(width: 28, height: 28)
+                                    .shadow(color: store.canSend ? Color.accentColor.opacity(0.35) : Color.clear, radius: 3, y: 1.5)
 
-                    Button {
-                        store.submitDraft()
-                    } label: {
-                        ZStack {
-                            Circle()
-                                .fill(store.canSend ? Color.accentColor : Color.secondary.opacity(0.15))
-                                .frame(width: 28, height: 28)
-                                .shadow(color: store.canSend ? Color.accentColor.opacity(0.35) : Color.clear, radius: 3, y: 1.5)
-
-                            Image(systemName: "arrow.up")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(store.canSend ? Color.white : Color.secondary.opacity(0.6))
+                                Image(systemName: "arrow.up")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .foregroundStyle(store.canSend ? Color.white : Color.secondary.opacity(0.6))
+                            }
                         }
+                        .buttonStyle(.plain)
+                        .disabled(!store.canSend)
+                        .help(store.canSend ? "发送消息 (Enter)" : "无法发送")
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!store.canSend)
-                    .help(store.canSend ? (isRunning ? "引导当前任务 (Enter)" : "发送消息 (Enter)") : "无法发送")
                 }
             }
             .padding(10)
