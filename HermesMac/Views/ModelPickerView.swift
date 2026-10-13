@@ -2,6 +2,11 @@ import SwiftUI
 
 struct ModelPickerView: View {
     @Bindable var store: AppStore
+    @State private var isHovered = false
+
+    private var isInteractive: Bool {
+        store.connected && store.canSwitchModel
+    }
 
     private var title: String {
         if store.modelSwitching.contains(store.selectedProfile) { return "切换中…" }
@@ -40,11 +45,20 @@ struct ModelPickerView: View {
                     Text(title).lineLimit(1).truncationMode(.middle)
                 }
                 .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isHovered && isInteractive ? Color.primary : Color.secondary)
                 .frame(maxWidth: 170)
             }
             .menuStyle(.borderlessButton)
             .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                (isHovered && isInteractive) ? Color.accentColor.opacity(0.12) : Color.clear,
+                in: Capsule()
+            )
+            .contentShape(Capsule())
+            .onHover { isHovered = $0 }
+            .animation(.easeInOut(duration: 0.15), value: isHovered)
             .disabled(!store.connected || !store.canSwitchModel)
             .help(store.modelErrors[store.modelContext] ?? (store.canSwitchModel ? "切换当前会话的模型" : "任务完成后可切换模型"))
             .accessibilityLabel("模型：\(title)")

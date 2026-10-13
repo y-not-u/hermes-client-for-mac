@@ -81,18 +81,6 @@ struct ComposerView: View {
 
                     Spacer()
 
-                    if !store.draft.isEmpty {
-                        Button {
-                            store.draft = ""
-                        } label: {
-                            Image(systemName: "xmark.circle")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("清空输入")
-                    }
-
                     ModelPickerView(store: store)
 
                     if isRunning {
