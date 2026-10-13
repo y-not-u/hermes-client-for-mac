@@ -34,7 +34,7 @@
 | `session.redirect` | `profile`, 运行时 `session_id`, `text`，改向当前回合；工具执行中后端转为 steer |
 | `session.steer` | 相同参数，在下一工具边界注入补充要求 |
 | `session.interrupt` | `profile`, 运行时 `session_id`，只停止目标任务 |
-| 服务端 `approval` 请求 | 卡片显示服务给出的选项；JSON-RPC response 使用原请求 ID 和 `result.choice` |
+| 服务端 `approval` 请求 | 卡片显示服务给出的选项；带 `params.request_id` 时调用 `approval.respond(session_id, request_id, choice)`，收到 `resolved > 0` 后移除卡片；无队列 ID 的旧请求使用原 JSON-RPC ID 和 `result.choice` 响应 |
 
 源码参考中的 `idempotency_key`（create）和 `inline_images`（resume）是可选扩展参数，但实测 Hermes 0.21.5 严格拒绝这些额外 RPC 参数。客户端统一省略它们，保持同一套请求；没有失败后切换协议或自动再次 create 的逻辑，也不依赖幂等键进行重试。
 

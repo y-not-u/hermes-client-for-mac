@@ -811,18 +811,24 @@ struct ApprovalCard: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
 
-                    ScrollView(.horizontal, showsIndicators: true) {
-                        Text(approval.params["command"].string)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(Color(red: 0.92, green: 0.94, blue: 0.96))
-                            .padding(8)
-                            .textSelection(.enabled)
-                    }
-                    .cleanScrollBars()
-                    .environment(\.colorScheme, .dark)
-                    .background(Color(red: 0.12, green: 0.13, blue: 0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    Text(approval.params["command"].string)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(Color(red: 0.92, green: 0.94, blue: 0.96))
+                        .padding(8)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .environment(\.colorScheme, .dark)
+                        .background(Color(red: 0.12, green: 0.13, blue: 0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
+            }
+
+            if let error = conversation.approvalErrors[approval.id] {
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
             }
 
             HStack(spacing: 10) {
@@ -833,6 +839,11 @@ struct ApprovalCard: View {
                 .controlSize(.small)
 
                 Spacer()
+
+                if conversation.submittingApprovals.contains(approval.id) {
+                    ProgressView().controlSize(.small)
+                    Text("正在提交…").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
 
                 if approval.params["choices"].array.contains(.string("session")) {
                     Button("此会话允许") {
@@ -851,7 +862,7 @@ struct ApprovalCard: View {
                     .tint(.orange)
                 }
             }
-            .disabled(!store.connected || conversation.uncertain)
+            .disabled(!store.connected || conversation.uncertain || conversation.submittingApprovals.contains(approval.id))
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)

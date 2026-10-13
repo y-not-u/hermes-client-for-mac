@@ -17,6 +17,8 @@ import Observation
         return result
     }
     var approvals: [Approval] = []
+    var submittingApprovals: Set<String> = []
+    var approvalErrors: [String: String] = [:]
     var generating = false
     var uncertain = false
     var queryingStatus = false

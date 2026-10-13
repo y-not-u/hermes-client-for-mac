@@ -334,6 +334,39 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertEqual(stats["requests"].array.filter { $0["method"].string == "prompt.submit" }.count, 2)
     }
 
+    func testApprovalUsesQueueIdentityAndRequiresConfirmation() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "question"
+        await store.send()
+        let conversation = try XCTUnwrap(store.current)
+        for choice in ["once", "session", "deny"] {
+            let approval = Approval(id: "srq-\(choice)", params: .object([
+                "request_id": .string("queue-\(choice)"),
+                "choices": .array([.string(choice)])
+            ]))
+            conversation.approvals.append(approval)
+            await store.approve(approval, conversation: conversation, choice: choice)
+            XCTAssertTrue(conversation.approvals.isEmpty)
+            XCTAssertTrue(conversation.submittingApprovals.isEmpty)
+            XCTAssertNil(conversation.approvalErrors[approval.id])
+        }
+        let expired = Approval(id: "srq-expired", params: .object([
+            "request_id": .string("expired"), "choices": .array([.string("once")])
+        ]))
+        conversation.approvals.append(expired)
+        await store.approve(expired, conversation: conversation, choice: "once")
+        XCTAssertEqual(conversation.approvals.map(\.id), [expired.id])
+        XCTAssertNotNil(conversation.approvalErrors[expired.id])
+        XCTAssertTrue(conversation.submittingApprovals.isEmpty)
+        let stats = try await fixture(["action": .string("stats")])
+        let calls = stats["requests"].array.filter { $0["method"].string == "approval.respond" }
+        XCTAssertEqual(calls.count, 4)
+        XCTAssertEqual(calls.first?["params"]["request_id"].string, "queue-once")
+        XCTAssertEqual(calls.first?["params"]["session_id"].string, conversation.runtimeID)
+        XCTAssertTrue(stats["responses"].array.isEmpty)
+    }
+
     func testLateCreateResponseRemainsOwnedByOriginalProfile() async throws {
         let (store, client, defaults, name) = try await prepare()
         defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }

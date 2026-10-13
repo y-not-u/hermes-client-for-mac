@@ -207,6 +207,8 @@ class Fixture:
             session = next(s for s in self.sessions.values() if s['session_id'] == params['session_id'])
             session['running'] = True
             session['messages'].append({'role': 'user', 'content': params['text']})
+        elif method == 'approval.respond':
+            result = {'resolved': 0 if params.get('request_id') == 'expired' else 1}
         elif method == 'session.interrupt':
             session = next(s for s in self.sessions.values() if s['session_id'] == params['session_id'])
             session['running'] = False

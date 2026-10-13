@@ -451,9 +451,31 @@ import AppKit
     func approve(_ approval: Approval, conversation c: Conversation, choice: String) async {
         guard let client, c.key.service == client.service, conversations[c.key] === c,
               c.approvals.contains(where: { $0.id == approval.id }), c.runtimeID != nil,
-              approval.params["choices"].array.contains(.string(choice)), !c.uncertain, connected else { return }; let epoch = generation
-        do { try await client.respond(id: approval.id, result: .object(["choice": .string(choice)])); guard epoch == generation else { return }; c.approvals.removeAll { $0.id == approval.id } }
-        catch { c.error = error.localizedDescription }
+              approval.params["choices"].array.contains(.string(choice)), !c.uncertain, connected,
+              !c.submittingApprovals.contains(approval.id) else { return }
+        let epoch = generation
+        c.submittingApprovals.insert(approval.id)
+        c.approvalErrors.removeValue(forKey: approval.id)
+        defer { c.submittingApprovals.remove(approval.id) }
+        do {
+            let requestID = approval.params["request_id"].string
+            if !requestID.isEmpty, let runtime = c.runtimeID {
+                let result = try await client.request("approval.respond", [
+                    "session_id": .string(runtime), "request_id": .string(requestID), "choice": .string(choice)
+                ])
+                guard epoch == generation else { return }
+                guard result["resolved"].number > 0 || result["resolved"] == .bool(true) else {
+                    throw ClientError(message: "服务端未确认此审批，请查询会话状态后重试")
+                }
+            } else {
+                try await client.respond(id: approval.id, result: .object(["choice": .string(choice)]))
+            }
+            guard epoch == generation else { return }
+            c.approvals.removeAll { $0.id == approval.id }
+        } catch {
+            guard epoch == generation else { return }
+            c.approvalErrors[approval.id] = "审批提交失败：\(error.localizedDescription)"
+        }
     }
     func rename(_ row: SessionSummary, to title: String, profile owner: String? = nil, service expectedService: String? = nil) async {
         guard expectedService == nil || expectedService == service else { return }
