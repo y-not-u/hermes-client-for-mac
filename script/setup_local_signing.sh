@@ -68,8 +68,8 @@ signing_step "export signing identity" /usr/bin/openssl pkcs12 -export -name "$I
 signing_step "import signing identity" security import "$signing_temp/identity.p12" -k "$signing_keychain" \
   -P "$(cat "$signing_temp/password")" -T /usr/bin/codesign
 # User-domain trust can request GUI authorization even in an unlocked keychain.
-# CI temporarily allows the admin trust authorization right before using
-# root's admin-domain operation. sudo -n fails instead of asking for a password.
+# CI uses root's admin-domain operation without rewriting authorization rights.
+# sudo -n fails instead of asking for a password.
 # The certificate stays in the disposable signing keychain,
 # and trust is restricted to code signing on the disposable hosted runner.
 if [ "$signing_trust_domain" = "admin" ]; then
