@@ -58,6 +58,91 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         ])])
     }
 
+    func testModelSwitchRejectsLiteralShellQuotesLikeHermes() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        await store.loadModels()
+        await store.switchModel(ModelChoice(provider: "fixture", model: "new-model"))
+        let runtime = try XCTUnwrap(store.current?.runtimeID)
+        do {
+            _ = try await client.request("config.set", ["profile": .string("a"), "session_id": .string(runtime),
+                "key": .string("model"), "value": .string("'new-model' --provider 'other' --session")])
+            XCTFail("Hermes must treat quotes as part of the provider name")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Unknown provider"))
+        }
+        await store.loadModels()
+        XCTAssertEqual(store.modelCatalog?.provider, "fixture")
+        await store.switchModel(ModelChoice(provider: "other", model: "new-model"))
+        XCTAssertEqual(store.modelCatalog?.provider, "other")
+    }
+
+    func testModelPickerCreatesSessionPreservingDraftAndSwitchesBeforeSending() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        await store.loadModels()
+        XCTAssertEqual(store.modelCatalog?.model, "default-a")
+        store.draft = "keep my draft"
+        await store.switchModel(ModelChoice(provider: "other", model: "new-model"))
+        let c = try XCTUnwrap(store.current)
+        XCTAssertTrue(c.messages.isEmpty)
+        XCTAssertEqual(store.draft, "keep my draft")
+        XCTAssertEqual(store.modelCatalog?.model, "new-model")
+        XCTAssertEqual(store.modelCatalog?.provider, "other")
+        let report = try await fixture(["action": .string("inspect")])
+        let requests = report["requests"].array
+        XCTAssertEqual(requests.filter { $0["method"].string == "session.create" }.count, 1)
+        XCTAssertFalse(requests.contains { $0["method"].string == "prompt.submit" })
+        let mutation = try XCTUnwrap(requests.first { $0["method"].string == "config.set" })
+        XCTAssertEqual(mutation["params"]["session_id"].string, c.runtimeID)
+        XCTAssertEqual(mutation["params"]["value"].string, "new-model --provider other --session")
+        await store.send()
+        XCTAssertTrue(c.generating)
+        XCTAssertFalse(store.canSwitchModel)
+        await store.selectProfile("b"); await store.loadModels()
+        XCTAssertEqual(store.modelCatalog?.model, "default-b")
+        await store.selectProfile("a"); await store.loadModels()
+        XCTAssertEqual(store.modelCatalog?.model, "new-model")
+    }
+
+    func testModelSwitchConfirmationAndFailureKeepCurrentSelection() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        await store.loadModels()
+        _ = try await fixture(["action": .string("configure"), "model_confirm": .bool(true)])
+        let choice = ModelChoice(provider: "fixture", model: "new-model")
+        store.draft = "draft survives"
+        await store.switchModel(choice)
+        XCTAssertEqual(store.modelCatalog?.model, "default-a")
+        let confirmation = try XCTUnwrap(store.modelConfirmation)
+        store.modelConfirmation = nil
+        await store.switchModel(choice, confirmation: confirmation)
+        XCTAssertEqual(store.modelCatalog?.model, "new-model")
+        _ = try await fixture(["action": .string("configure"), "model_error": .bool(true)])
+        await store.switchModel(ModelChoice(provider: "fixture", model: "default-a"))
+        XCTAssertEqual(store.modelCatalog?.model, "new-model")
+        XCTAssertEqual(store.draft, "draft survives")
+        XCTAssertNotNil(store.modelErrors[store.modelContext])
+    }
+
+    func testModelSwitchDoesNotPublishIntoAnotherProfileOrAllowConcurrentSend() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        await store.loadModels()
+        store.draft = "draft"
+        await store.switchModel(ModelChoice(provider: "fixture", model: "new-model"))
+        _ = try await fixture(["action": .string("configure"), "model_delay": .number(0.3)])
+        let switching = Task { await store.switchModel(ModelChoice(provider: "fixture", model: "default-a")) }
+        try await eventually { store.modelSwitching.contains("a") }
+        XCTAssertFalse(store.canSend)
+        await store.selectProfile("b"); await store.loadModels()
+        await switching.value
+        XCTAssertEqual(store.selectedProfile, "b")
+        XCTAssertEqual(store.modelCatalog?.model, "default-b")
+        await store.selectProfile("a"); await store.loadModels()
+        XCTAssertEqual(store.modelCatalog?.model, "default-a")
+    }
+
     func testArchiveRemovesCurrentSessionAndPreservesDraft() async throws {
         let (store, client, defaults, name) = try await prepare()
         defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }

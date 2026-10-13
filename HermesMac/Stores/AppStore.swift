@@ -18,6 +18,12 @@ import AppKit
     var listLoading = false
     var listHasMore: [String: Bool] = [:]
     var draft = "" { didSet { persistDraft() } }
+    var modelCatalogs: [ModelPickerContext: ModelCatalog] = [:]
+    var modelErrors: [ModelPickerContext: String] = [:]
+    var modelLoading: Set<ModelPickerContext> = []
+    var modelSwitching: Set<String> = []
+    var modelConfirmation: ModelSwitchConfirmation?
+    private var modelRevisions: [ModelPickerContext: UUID] = [:]
     private var client: HermesClient?
     @ObservationIgnored private let imageCache = RemoteImageCache()
     @ObservationIgnored private let makeClient: (String) throws -> HermesClient
@@ -57,10 +63,102 @@ import AppKit
     var profileTitle: String { profiles.first(where: { $0.name == selectedProfile })?.displayName ?? "Hermes" }
     var canSend: Bool {
         connected && !selectedProfile.isEmpty && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        && !busyProfiles.contains(selectedProfile) && current?.readOnlyReason == nil && current?.loading != true
+        && !busyProfiles.contains(selectedProfile) && !modelSwitching.contains(selectedProfile) && current?.readOnlyReason == nil && current?.loading != true
         && (selectedSession == nil || current != nil)
         && (currentKey.map { !sessionMutations.contains($0) } ?? true)
         && !conversations.values.contains { $0.key.profile == selectedProfile && ($0.uncertain || ($0.generating && $0 !== current)) }
+    }
+    var modelContext: ModelPickerContext {
+        ModelPickerContext(service: service, profile: selectedProfile, sessionID: selectedSession)
+    }
+    var modelCatalog: ModelCatalog? { modelCatalogs[modelContext] }
+    var canSwitchModel: Bool {
+        connected && !selectedProfile.isEmpty && !profileBusy(selectedProfile)
+        && !modelSwitching.contains(selectedProfile) && current?.loading != true
+        && current?.readOnlyReason == nil && (selectedSession == nil || current?.runtimeID != nil)
+        && (currentKey.map { !sessionMutations.contains($0) } ?? true)
+    }
+    func loadModels(refresh: Bool = false) async {
+        guard connected, !selectedProfile.isEmpty, let client else { return }
+        let context = modelContext; let epoch = generation; let revision = UUID()
+        modelRevisions[context] = revision; modelLoading.insert(context); modelErrors[context] = nil
+        defer { if epoch == generation, modelRevisions[context] == revision { modelLoading.remove(context) } }
+        var params: [String: JSON] = ["profile": .string(context.profile)]
+        if let runtime = current?.runtimeID { params["session_id"] = .string(runtime) }
+        if refresh { params["refresh"] = .bool(true) }
+        do {
+            let json = try await client.request("model.options", params)
+            guard epoch == generation, modelRevisions[context] == revision else { return }
+            modelCatalogs[context] = try ModelCatalog(json)
+        } catch {
+            guard epoch == generation, modelRevisions[context] == revision else { return }
+            modelErrors[context] = error.localizedDescription
+        }
+    }
+    func switchModel(_ choice: ModelChoice, confirmation: ModelSwitchConfirmation? = nil) async {
+        guard canSwitchModel, let client else { return }
+        if let confirmation {
+            guard confirmation.key == currentKey, confirmation.key.service == service else { return }
+        } else {
+            guard modelCatalog?.providers.contains(where: {
+                $0.choices.contains(choice) && !$0.unavailable.contains(choice.model)
+            }) == true else { return }
+        }
+        let profile = selectedProfile; let epoch = generation; let origin = navigation
+        let startingContext = modelContext
+        modelSwitching.insert(profile)
+        defer { if epoch == generation { modelSwitching.remove(profile) } }
+        do {
+            let c: Conversation
+            if let current { c = current }
+            else {
+                let snapshot = try await client.request("session.create", ["profile": .string(profile), "source": .string("dashboard"), "close_on_disconnect": .bool(false)])
+                guard epoch == generation else { return }
+                let id = snapshot["stored_session_id"].string
+                guard !id.isEmpty else { throw ClientError(message: "服务未返回持久会话 ID，请升级 Hermes") }
+                let key = ConversationKey(service: service, profile: profile, storedID: id)
+                c = Conversation(key: key); c.snapshot(snapshot); conversations[key] = c; bind(c)
+                sessions[profile, default: []].insert(SessionSummary(id: id, title: "新会话"), at: 0)
+                // Keep the user's draft while moving it into the newly created session.
+                if navigation == origin {
+                    local.update(service) {
+                        $0.lastSession[profile] = id
+                        $0.drafts[LocalState.draftKey(profile: profile, session: id)] = draft
+                        $0.drafts.removeValue(forKey: LocalState.draftKey(profile: profile, session: nil))
+                    }
+                    selectedSession = id
+                    modelCatalogs[modelContext] = modelCatalogs[startingContext]
+                }
+            }
+            guard epoch == generation, navigation == origin, currentKey == c.key else { return }
+            guard let runtime = c.runtimeID, !runtime.isEmpty else { throw ClientError(message: "会话未恢复，请重连后再切换模型") }
+            var params: [String: JSON] = ["profile": .string(profile), "session_id": .string(runtime),
+                                         "key": .string("model"), "value": .string(choice.switchValue)]
+            if confirmation != nil { params["confirm_expensive_model"] = .bool(true) }
+            let result = try await client.request("config.set", params)
+            guard epoch == generation else { return }
+            if result["confirm_required"].bool {
+                if currentKey == c.key {
+                    modelConfirmation = ModelSwitchConfirmation(key: c.key, choice: choice,
+                        message: result["confirm_message"].string.isEmpty ? result["warning"].string : result["confirm_message"].string)
+                }
+                return
+            }
+            guard result["key"].string == "model", !result["value"].string.isEmpty else {
+                throw ClientError(message: "服务未确认模型切换，请刷新模型列表检查当前状态")
+            }
+            let context = ModelPickerContext(service: c.key.service, profile: profile, sessionID: c.key.storedID)
+            // Invalidate reads started before the mutation's response.
+            modelRevisions[context] = UUID(); modelLoading.remove(context)
+            modelCatalogs[context]?.model = result["value"].string
+            modelCatalogs[context]?.provider = choice.provider
+            modelErrors[context] = nil
+            if currentKey == c.key { await loadModels() }
+        } catch {
+            guard epoch == generation else { return }
+            modelErrors[ModelPickerContext(service: startingContext.service, profile: profile,
+                                           sessionID: selectedProfile == profile && navigation == origin ? selectedSession : startingContext.sessionID)] = error.localizedDescription
+        }
     }
     func profileBusy(_ profile: String) -> Bool { busyProfiles.contains(profile) || conversations.values.contains { $0.key.profile == profile && ($0.generating || $0.uncertain) } }
     func profileApproval(_ profile: String) -> Bool { conversations.values.contains { $0.key.profile == profile && !$0.approvals.isEmpty } }
@@ -81,6 +179,7 @@ import AppKit
             generation = attempt; activated = true
             let epoch = attempt
             client?.disconnect(); client = next; connected = false; connecting = true; connection = "连接中…"; error = nil
+            modelCatalogs = [:]; modelErrors = [:]; modelLoading = []; modelSwitching = []; modelRevisions = [:]; modelConfirmation = nil
             busyProfiles = []; routes = [:]; earlyFrames = [:]; buffered = []; flushTask?.cancel(); flushTask = nil
             if changed { conversations = [:]; sessions = [:]; profiles = []; busyProfiles = []; selectedProfile = ""; selectedSession = nil; draft = ""; search = "" }
             address = next.service; local.address = address
@@ -174,6 +273,7 @@ import AppKit
     }
     func selectProfile(_ profile: String) async {
         guard profiles.contains(where: { $0.name == profile }) else { return }
+        modelConfirmation = nil
         navigation = UUID(); selectedProfile = profile; selectedSession = local.state(service).lastSession[profile]; search = ""
         draft = local.state(service).drafts[LocalState.draftKey(profile: profile, session: selectedSession)] ?? ""
         local.update(service) { $0.selectedProfile = profile }
@@ -192,7 +292,7 @@ import AppKit
         profiles.swapAt(i, i + delta); local.update(service) { $0.profileOrder = profiles.map(\.name) }
     }
     private func restoreDraft() { draft = local.state(service).drafts[LocalState.draftKey(profile: selectedProfile, session: selectedSession)] ?? "" }
-    func newSession() { navigation = UUID(); selectedSession = nil; local.update(service) { $0.lastSession.removeValue(forKey: selectedProfile) }; restoreDraft() }
+    func newSession() { modelConfirmation = nil; navigation = UUID(); selectedSession = nil; local.update(service) { $0.lastSession.removeValue(forKey: selectedProfile) }; restoreDraft() }
     func searchChanged() {
         searchTask?.cancel(); let profile = selectedProfile; let query = search
         searchTask = Task { [weak self] in

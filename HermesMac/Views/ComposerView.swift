@@ -93,6 +93,8 @@ struct ComposerView: View {
                         .help("清空输入")
                     }
 
+                    ModelPickerView(store: store)
+
                     if isRunning {
                         Button {
                             store.stopCurrent()

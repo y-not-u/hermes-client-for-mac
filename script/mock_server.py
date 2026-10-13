@@ -32,6 +32,9 @@ class Fixture:
         self.drop_on_correction = False
         self.complete_on_resume = False
         self.resume_delay = 0
+        self.model_confirm = False
+        self.model_error = False
+        self.model_delay = 0
 
     async def control(self, request):
         body = await request.json()
@@ -57,6 +60,9 @@ class Fixture:
                     'messages': [{'_row_id': 1, 'role': 'tool', 'content': 'x' * 2_000_000}] + [
                         {'_row_id': i + 2, 'role': 'tool' if i % 3 == 0 else ('user' if i % 3 == 1 else 'assistant'),
                          'content': f'message-{i}'} for i in range(65)]}
+            for key in ('model_confirm', 'model_error', 'model_delay'):
+                if key in body:
+                    setattr(self, key, body[key])
         elif action == 'drop':
             for ws in list(self.sockets):
                 await ws.close()
@@ -156,7 +162,30 @@ class Fixture:
         params = frame.get('params', {})
         self.requests.append({'method': method, 'params': params})
         result = {}
-        if method == 'session.create':
+        if method == 'model.options':
+            session = next((s for s in self.sessions.values() if s['session_id'] == params.get('session_id')), {})
+            result = {'provider': session.get('model_provider', 'fixture'),
+                      'model': session.get('model', 'default-' + params['profile']),
+                      'providers': [{'slug': 'fixture', 'name': 'Fixture', 'models': ['default-' + params['profile'], 'new-model']},
+                                    {'slug': 'other', 'name': 'Other', 'models': ['new-model']}]}
+        elif method == 'config.set' and params['key'] == 'model':
+            await asyncio.sleep(self.model_delay)
+            if self.model_error:
+                await ws.send_json({'jsonrpc': '2.0', 'id': frame['id'], 'error': {'code': 5001, 'message': 'model switch refused'}})
+                return
+            session = next(s for s in self.sessions.values() if s['session_id'] == params['session_id'])
+            words = params['value'].split()
+            provider = words[words.index('--provider') + 1]
+            if provider not in ('fixture', 'other'):
+                await ws.send_json({'jsonrpc': '2.0', 'id': frame['id'], 'error': {'code': 5001, 'message': f"Unknown provider '{provider}'"}})
+                return
+            result = {'key': 'model', 'value': words[0]}
+            if self.model_confirm and not params.get('confirm_expensive_model'):
+                result.update(confirm_required=True, confirm_message='This model costs more.')
+            else:
+                session['model'] = words[0]
+                session['model_provider'] = words[words.index('--provider') + 1]
+        elif method == 'session.create':
             self.counter += 1
             sid = f"stored-{self.counter}"
             result = {'stored_session_id': sid, 'session_id': f"runtime-{self.counter}",

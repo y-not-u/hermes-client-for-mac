@@ -33,6 +33,8 @@
 | `prompt.submit` | `profile`, 运行时 `session_id`, `text`；运行中的“完成后发送”额外传 `queued=true` |
 | `session.redirect` | `profile`, 运行时 `session_id`, `text`，改向当前回合；工具执行中后端转为 steer |
 | `session.steer` | 相同参数，在下一工具边界注入补充要求 |
+| `model.options` | `profile`，已打开会话额外传运行时 `session_id`；读取 `providers` 和当前 `model/provider`，手动刷新传 `refresh=true` |
+| `config.set` | `profile`, 运行时 `session_id`, `key=model`, `value=<model> --provider <slug> --session`；收到 `confirm_required` 时展示服务端提示，用户确认后才额外传 `confirm_expensive_model=true` |
 | `session.interrupt` | `profile`, 运行时 `session_id`，只停止目标任务 |
 | 服务端 `approval` 请求 | 卡片显示服务给出的选项；带 `params.request_id` 时调用 `approval.respond(session_id, request_id, choice)`，收到 `resolved > 0` 后移除卡片；无队列 ID 的旧请求使用原 JSON-RPC ID 和 `result.choice` 响应 |
 
@@ -71,3 +73,11 @@
 ### 流式恢复的水位边界
 
 当前后端快照没有与通知流共享的服务端水位。客户端记录接收次序，以 inflight 快照覆盖此前流式文字，工具事件按稳定 ID 保留；历史请求开始后、恢复响应之前到达的 `message.complete` 仍按最终全文校正显示，相同末尾全文不重复追加。REST 页面与运行状态不是原子快照。快照构建与响应之间并发发出的少量 delta 可能暂未显示，故本版不能声称严格无损的事件重放。后续需将服务端快照水位与 `session.events.since` 协调，不能把本地接收次序当作服务端事件序号。
+
+## 输入栏模型选择
+
+发送按钮左侧使用原生菜单，按提供商分组；只展示已配置提供商的模型，标记当前选择并禁用服务标记不可用的模型。列表和状态按服务、角色、持久会话隔离，旧请求不能覆盖切换后的模型状态。未连接、只读、角色运行中或状态不确定时禁止切换；切换请求期间禁止同角色发送。切换失败保留原模型和草稿，菜单显示错误并支持刷新。请求超时不会自动重发。
+
+尚未创建会话时，选择模型先调用 `session.create`，将草稿移入新会话，然后执行会话级 `config.set`；不会向模型发送聊天消息，也不会写角色默认模型。此流程对照基线源码 `tui_gateway/methods_complete.py` 的 `model.options` 和 `methods_config_set.py` 的模型 setter。真实服务已验证模型列表；切换、确认和失败行为通过模拟服务集成测试验证。
+
+`config.set` 的模型字符串由服务端按空白拆分，名称不加 shell 引号；引号会被当作提供商 ID 的一部分。模拟服务采用相同规则，并通过拒绝带引号的提供商名称的回归用例验证。
