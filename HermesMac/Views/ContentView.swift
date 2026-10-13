@@ -21,6 +21,12 @@ struct ContentView: View {
                     .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .background(WindowAccessor { window in
+            window.titleVisibility = .hidden
+            window.titlebarAppearsTransparent = true
+            window.styleMask.insert(.fullSizeContentView)
+            window.isMovableByWindowBackground = true
+        })
     }
 }
 
@@ -29,19 +35,9 @@ struct ProfileRail: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            // App Brand Logo
-            VStack(spacing: 10) {
-                Image(nsImage: NSApp.applicationIconImage ?? NSImage(named: NSImage.applicationIconName) ?? NSImage())
-                .resizable()
-                .scaledToFit()
-                .frame(width: 44, height: 44)
-                .accessibilityLabel("Hermes")
-                .padding(.top, 14)
-
-                Rectangle()
-                    .fill(Color.secondary.opacity(0.18))
-                    .frame(width: 32, height: 1)
-            }
+            // Spacing for macOS window control traffic lights
+            Color.clear
+                .frame(height: 38)
 
             // Profiles list
             ScrollView(showsIndicators: false) {
@@ -183,5 +179,25 @@ private struct ProfileRailSettingsButton: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .help("连接设置")
+    }
+}
+
+struct WindowAccessor: NSViewRepresentable {
+    let configure: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            if let window = view.window {
+                configure(window)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let window = nsView.window {
+            configure(window)
+        }
     }
 }

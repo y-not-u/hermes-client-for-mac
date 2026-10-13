@@ -3,6 +3,7 @@ import AppKit
 
 struct SessionListView: View {
     @Bindable var store: AppStore
+    @AppStorage(ChatTypography.key) private var fontSize = ChatTypography.defaultSize
     @State private var renaming: SessionSummary?
     @State private var title = ""
     @State private var renameProfile = ""
@@ -18,23 +19,51 @@ struct SessionListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack(alignment: .center, spacing: 8) {
+            // Top Bar: Search & Actions (aligned with traffic lights)
+            HStack(spacing: 8) {
+                // Modern Search Bar
                 HStack(spacing: 6) {
-                    Text("会话")
-                        .font(.system(size: 15, weight: .bold))
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
 
-                    if !currentSessions.isEmpty {
-                        Text("\(currentSessions.count)")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1.5)
-                            .background(Color.secondary.opacity(0.1), in: Capsule())
+                    TextField("搜索会话…", text: $store.search)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: ChatTypography.scaled(12, for: fontSize)))
+                        .focused($isSearchFocused)
+                        .onChange(of: store.search) { _, _ in store.searchChanged() }
+
+                    if !store.search.isEmpty {
+                        Button {
+                            store.search = ""
+                            store.searchChanged()
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5.5)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(isSearchFocused ? Color.accentColor.opacity(0.6) : Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
+                }
 
-                Spacer()
+                Button {
+                    store.newSession()
+                } label: {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .frame(width: 26, height: 26)
+                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .help("新会话 · ⌘N")
 
                 Button {
                     Task { await store.loadSessions(profile: store.selectedProfile, query: store.search) }
@@ -49,55 +78,9 @@ struct SessionListView: View {
                 .frame(width: 26, height: 26)
                 .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .help("刷新会话")
-
-                Button {
-                    store.newSession()
-                } label: {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .frame(width: 26, height: 26)
-                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .help("新会话 · ⌘N")
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 14)
-            .padding(.bottom, 10)
-
-            // Modern Search Bar
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.secondary)
-
-                TextField("搜索会话…", text: $store.search)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .focused($isSearchFocused)
-                    .onChange(of: store.search) { _, _ in store.searchChanged() }
-
-                if !store.search.isEmpty {
-                    Button {
-                        store.search = ""
-                        store.searchChanged()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5.5)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(isSearchFocused ? Color.accentColor.opacity(0.6) : Color(nsColor: .separatorColor).opacity(0.4), lineWidth: 1)
             }
             .padding(.horizontal, 12)
+            .padding(.top, 14)
             .padding(.bottom, 8)
 
             // Sessions List in Clean ScrollView
@@ -109,7 +92,7 @@ struct SessionListView: View {
                         .foregroundStyle(.tertiary)
 
                     Text(store.search.isEmpty ? "暂无会话" : "未找到匹配会话")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: ChatTypography.scaled(13, for: fontSize), weight: .medium))
                         .foregroundStyle(.secondary)
 
                     if store.search.isEmpty {
@@ -136,6 +119,7 @@ struct SessionListView: View {
                             ForEach(currentSessions) { session in
                                 SessionCardItem(
                                     session: session,
+                                    fontSize: fontSize,
                                     isSelected: store.selectedSession == session.id,
                                     onSelect: {
                                         Task { await store.openSession(session.id) }
@@ -185,11 +169,12 @@ struct SessionListView: View {
             if store.listLoading && !currentSessions.isEmpty {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini)
-                    Text("加载中…").font(.caption2).foregroundStyle(.secondary)
+                    Text("加载中…").font(.system(size: ChatTypography.scaled(11, for: fontSize))).foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 4)
             }
         }
+        .font(.system(size: ChatTypography.scaled(13, for: fontSize)))
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.35))
         .alert("删除会话？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button("取消", role: .cancel) { deleting = nil }
@@ -224,6 +209,7 @@ struct SessionListView: View {
 
 private struct SessionCardItem: View {
     let session: SessionSummary
+    let fontSize: Double
     let isSelected: Bool
     let onSelect: () -> Void
     let onRename: () -> Void
@@ -257,7 +243,7 @@ private struct SessionCardItem: View {
                     // Title row + optional extracted time badge
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text(parsed.title)
-                            .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
+                            .font(.system(size: ChatTypography.scaled(12.5, for: fontSize), weight: isSelected ? .semibold : .medium))
                             .foregroundStyle(isSelected ? Color.primary : Color.primary.opacity(0.88))
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -266,7 +252,7 @@ private struct SessionCardItem: View {
 
                         if let date = parsed.date {
                             Text(date)
-                                .font(.system(size: 10, weight: .regular))
+                                .font(.system(size: ChatTypography.scaled(10, for: fontSize), weight: .regular))
                                 .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.8))
                                 .lineLimit(1)
                         }
@@ -275,7 +261,7 @@ private struct SessionCardItem: View {
                     // Preview row
                     if !displayPreview.isEmpty {
                         Text(displayPreview)
-                            .font(.system(size: 11))
+                            .font(.system(size: ChatTypography.scaled(11, for: fontSize)))
                             .foregroundStyle(isSelected ? Color.secondary : Color.secondary.opacity(0.75))
                             .lineLimit(1)
                             .truncationMode(.tail)

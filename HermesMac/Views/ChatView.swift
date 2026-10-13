@@ -18,53 +18,27 @@ struct ChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Modern Header
-            HStack(spacing: 12) {
-                ProfileAvatar(
-                    name: store.selectedProfile,
-                    displayName: store.profileTitle,
-                    size: 32,
-                    cornerRadius: 9
-                )
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(currentSessionTitle)
-                            .font(.system(size: 14, weight: .semibold))
-                            .lineLimit(1)
-
-                        Text(store.profileTitle)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1.5)
-                            .background(Color.secondary.opacity(0.08), in: Capsule())
-                    }
-
-                    HStack(spacing: 6) {
-                        ConnectionStatusBadge(
-                            connected: store.connected,
-                            connecting: store.connecting,
-                            text: store.connection
-                        )
-
-                        if let c = store.current, c.generating {
-                            Text("· 正在生成")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+            // Minimal Assistant Header (matching Image 2)
+            HStack {
+                Spacer()
+                VStack(spacing: 3) {
+                    ProfileAvatar(
+                        name: store.selectedProfile,
+                        displayName: store.profileTitle,
+                        size: 26,
+                        cornerRadius: 8
+                    )
+                    Text(store.profileTitle)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
                 }
-
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                .background(.ultraThinMaterial, in: Capsule())
                 Spacer()
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            .background(Color(nsColor: .windowBackgroundColor).opacity(0.7))
-
-            Rectangle()
-                .fill(Color(nsColor: .separatorColor).opacity(0.4))
-                .frame(height: 1)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
 
             // Alert Banners
             if let error = store.error {

@@ -484,7 +484,7 @@ struct SettingsView: View {
                 }
 
                 HStack {
-                    Text("即时应用于消息、代码块和输入框，并自动保存。")
+                    Text("即时应用于会话列表、消息、代码块和输入框，并自动保存。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 

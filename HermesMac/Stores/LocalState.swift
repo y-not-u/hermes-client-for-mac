@@ -24,7 +24,7 @@ struct ServiceState: Codable {
     static func draftKey(profile: String, session: String?) -> String { profile + "\u{001f}" + (session ?? "new") }
 }
 
-/// Shared, durable typography preference for conversation content and composing.
+/// Shared, durable typography preference for session lists, conversation content, and composing.
 enum ChatTypography {
     static let key = "chatFontSize"
     static let defaultSize = 13.5

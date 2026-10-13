@@ -16,6 +16,7 @@ import AppKit
             ContentView(store: store).tint(Color.accentColor).frame(minWidth: 800, minHeight: 540)
                 .task { if !store.connected && !store.connecting { await store.connect() } }
         }
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1120, height: 760)
         .commands {
             CommandGroup(replacing: .newItem) {
