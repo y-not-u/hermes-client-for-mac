@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import OSLog
 
 @main struct HermesMacApp: App {
     @AppStorage(ChatTypography.key) private var fontSize = ChatTypography.defaultSize
@@ -9,11 +10,25 @@ import AppKit
     })
     init() {
         NSScroller.enableCleanTrackBackground()
+        #if DEBUG
+        // Isolated UI acceptance: no real preferences or Keychain entries are read or changed.
+        let arguments = ProcessInfo.processInfo.arguments
+        if let flag = arguments.firstIndex(of: "--bot-screen-fixture"), arguments.indices.contains(flag + 1),
+           let url = URL(string: arguments[flag + 1]), url.scheme == "http", url.host == "127.0.0.1",
+           let defaults = UserDefaults(suiteName: "HermesMac-UIFixture-\(UUID().uuidString)") {
+            let local = LocalState(defaults: defaults)
+            local.address = url.absoluteString
+            _store = State(initialValue: AppStore(local: local, makeClient: {
+                try HermesClient(address: $0, credentials: Credentials(sessionToken: "fixture-token"))
+            }))
+        }
+        #endif
     }
 
     var body: some Scene {
-        WindowGroup("Hermes", id: "main") {
+        Window("Hermes", id: "main") {
             ContentView(store: store).tint(Color.accentColor).frame(minWidth: 800, minHeight: 540)
+                .onAppear { delegate.configure(store: store) }
                 .task { if !store.connected && !store.connecting { await store.connect() } }
         }
         .windowStyle(.hiddenTitleBar)
@@ -23,6 +38,14 @@ import AppKit
                 Button("新建会话") { store.newSession() }.keyboardShortcut("n")
             }
             CommandMenu("显示") {
+                Button(store.botScreen.isOpen ? "关闭电脑" : "打开电脑") {
+                    Task {
+                        if store.botScreen.isOpen { await store.botScreen.close() }
+                        else { await store.botScreen.open() }
+                    }
+                }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+                Divider()
                 Button("放大字体") { fontSize = Double(ChatTypography.size(fontSize + 0.5)) }
                     .keyboardShortcut("+", modifiers: [.command])
                     .disabled(fontSize >= ChatTypography.range.upperBound)
@@ -42,7 +65,64 @@ import AppKit
         Settings { SettingsView(store: store).tint(Color.accentColor) }
     }
 }
-final class AppDelegate: NSObject, NSApplicationDelegate {
+@MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
+    static let mainWindowIdentifier = NSUserInterfaceItemIdentifier("HermesMainWindow")
+    private static let logger = Logger(subsystem: "HermesMac", category: "DesktopLifecycle")
+    private weak var store: AppStore?
+    private var observingWindows = false
+    private var terminating = false
+    private var terminationReplySent = false
+    private var terminationDeadline: Task<Void, Never>?
+
+    func configure(store: AppStore) {
+        self.store = store
+        guard !observingWindows else { return }
+        observingWindows = true
+        NotificationCenter.default.addObserver(self, selector: #selector(mainWindowWillClose(_:)),
+                                               name: NSWindow.willCloseNotification, object: nil)
+    }
+
+    @objc private func mainWindowWillClose(_ notification: Notification) {
+        guard !terminating, let closing = notification.object as? NSWindow,
+              closing.identifier == Self.mainWindowIdentifier,
+              !NSApp.windows.contains(where: {
+                  $0 !== closing && $0.identifier == Self.mainWindowIdentifier && ($0.isVisible || $0.isMiniaturized)
+              }), let store else { return }
+        Task {
+            await store.botScreen.close()
+            if store.botScreen.error != nil || store.botScreen.notice != nil {
+                Self.logger.warning("Desktop control release after the last main window closed may be incomplete.")
+            }
+        }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let store, store.botScreen.isOpen || store.botScreen.hasControl else { return .terminateNow }
+        guard !terminating else { return .terminateLater }
+        terminating = true
+        terminationDeadline = Task {
+            do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            Self.logger.warning("Desktop control release timed out during application exit; server state may be unknown.")
+            finishTermination()
+        }
+        Task {
+            await store.botScreen.close()
+            if store.botScreen.error != nil || store.botScreen.notice != nil {
+                Self.logger.warning("Desktop control release during application exit may be incomplete.")
+            }
+            finishTermination()
+        }
+        return .terminateLater
+    }
+
+    private func finishTermination() {
+        guard !terminationReplySent else { return }
+        terminationReplySent = true
+        terminationDeadline?.cancel()
+        terminationDeadline = nil
+        NSApp.reply(toApplicationShouldTerminate: true)
+    }
+
     override init() {
         super.init()
         NSScroller.enableCleanTrackBackground()

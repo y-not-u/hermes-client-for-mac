@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Generate the dependency-free Xcode project from checked-in Swift sources."""
+"""Generate the Xcode project from checked-in Swift sources and bundled assets."""
 from pathlib import Path
 import hashlib
 root = Path(__file__).resolve().parent.parent
 uid = lambda s: hashlib.sha1(s.encode()).hexdigest()[:24].upper()
 files = sorted((root/'HermesMac').rglob('*.swift'))
 resources = sorted((root/'HermesMac').glob('*.xcassets'))
+resource_folders = sorted(p for p in (root/'HermesMac'/'Resources').glob('*') if p.is_dir())
+resources += resource_folders
 objects = []
 def obj(name, body):
     objects.append(f'{uid(name)} = {{ {body} }};')
@@ -15,7 +17,8 @@ for file in files:
     obj(p+'build', f'isa = PBXBuildFile; fileRef = {uid(p)};')
 for resource in resources:
     p = str(resource.relative_to(root))
-    obj(p, f'isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "{p}"; sourceTree = "<group>";')
+    resource_type = 'folder' if resource in resource_folders else 'folder.assetcatalog'
+    obj(p, f'isa = PBXFileReference; lastKnownFileType = {resource_type}; path = "{p}"; sourceTree = "<group>";')
     obj(p+'build', f'isa = PBXBuildFile; fileRef = {uid(p)};')
 obj('product', 'isa = PBXFileReference; explicitFileType = wrapper.application; path = HermesMac.app; sourceTree = BUILT_PRODUCTS_DIR;')
 obj('products', f'isa = PBXGroup; children = ({uid("product")}); name = Products; sourceTree = "<group>";')
@@ -32,6 +35,7 @@ for kind in ['project','target']:
             settings += 'PRODUCT_NAME = HermesMac; PRODUCT_BUNDLE_IDENTIFIER = com.hermes.mac; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = HermesMac/Info.plist; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity"; CODE_SIGN_STYLE = Automatic; ENABLE_HARDENED_RUNTIME = YES; '
             if config == 'Debug':
                 settings = settings.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual; CODE_SIGN_IDENTITY = "HermesMac Local Development"; ENABLE_DEBUG_DYLIB = NO;')
+                settings += 'SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)"; '
         settings += 'SWIFT_OPTIMIZATION_LEVEL = "'+('-Onone' if config == 'Debug' else '-O')+'";'
         obj(kind+config, f'isa = XCBuildConfiguration; name = {config}; buildSettings = {{ {settings} }};')
     obj(kind+'configs', f'isa = XCConfigurationList; buildConfigurations = ({uid(kind+"Debug")},{uid(kind+"Release")}); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;')

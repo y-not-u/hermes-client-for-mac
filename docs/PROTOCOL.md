@@ -81,3 +81,26 @@
 尚未创建会话时，选择模型先调用 `session.create`，将草稿移入新会话，然后执行会话级 `config.set`；不会向模型发送聊天消息，也不会写角色默认模型。此流程对照基线源码 `tui_gateway/methods_complete.py` 的 `model.options` 和 `methods_config_set.py` 的模型 setter。真实服务已验证模型列表；切换、确认和失败行为通过模拟服务集成测试验证。
 
 `config.set` 的模型字符串由服务端按空白拆分，名称不加 shell 引号；引号会被当作提供商 ID 的一部分。模拟服务采用相同规则，并通过拒绝带引号的提供商名称的回归用例验证。
+
+## Bot Screen 扩展
+
+桌面契约单独对照官方 revision [`8f817911723e3ec13e7f47fc022fdcc9e2149354`](https://github.com/NousResearch/hermes-agent/tree/8f817911723e3ec13e7f47fc022fdcc9e2149354)。源码依据为 `tui_gateway/methods_display.py`、`hermes_cli/web_routers/display.py`、`tools/bot_desktop/{runtime,lease}.py` 及 `apps/desktop/src/plugins/hermes-bots/screen-pane.tsx`。这不改变此前聊天协议基线，也不等于已验证真实服务运行此 revision。
+
+| 方法 | 参数与返回 |
+| --- | --- |
+| `display.status` | `profile`；返回 `profile_key`、`supported`、`installed`、`running`、`missing`、`geometry`、`placement`、`blocker`、`install_command`、`lease` |
+| `display.start` | `profile`；返回完整状态，不自动安装包 |
+| `display.stop` | `profile`；有人工控制权时拒绝，客户端先交还本人 lease；不传 `force` |
+| `display.observe` | `profile`，同 RPC transport 重建桌面流时可加 `viewer_id`；返回完整状态与 `ticket`、`path=/api/display/ws`、服务签发的 `viewer_id` |
+| `display.lease.acquire` | `profile`, `viewer_id`, `reason`；返回 `lease`；替换另人控制权必须经过界面明确确认 |
+| `display.lease.release` | `profile`, `viewer_id`；仅释放本人，不传 `force`；返回 `lease` |
+
+观看 socket 使用 `ws(s)://<服务及代理前缀>/api/display/ws?display_ticket=…`。票据是通过已有认证 RPC 获取的 30 秒单次票据；不能把 `/api/auth/ws-ticket` 的主连接票据当成桌面票据。网关给出的路径只接受固定 endpoint，不能指定其他主机；URLQueryItem 负责票据编码。长期 token 不传给 WebView。
+
+`lease.holder` 为 `agent` 或 `human`；`viewer_hash` 是服务签发的 viewer ID 的 SHA-256 前 12 位。客户端用 hash 判断本人控制权，不从公开 `lease.viewer_id` 获取能力（官方公开值为 null）。控制权事件是全局 `event`，`params.type=display.lease`，`payload={profile_key,lease}`，不依赖聊天的 `session_id`；`profile_key` 是不透明的 home 身份，不能假设等于 profile 名称。
+
+状态按 `(service, profile)` 缓存。面板打开时每 10 秒查询运行状态；关闭时不轮询。观看流断开后尝试重新获取单次票据；握手超过 15 秒按失败处理。接管/启动等变更请求不自动重试。迟到接管的明确成功结果会用原 viewer 能力补偿交还；未知结果留下可关闭的控制权提醒，成功状态查询不会隐藏它。
+
+同一 RPC transport 的观看流重连可以保留 viewer 身份。RPC 断线后 viewer 需重新签发，旧 human lease 仍由服务保留；用户需明确确认「接管」恢复控制权，再交还。不自动用 `force` 清理旧 lease。切换 profile 或服务、关闭面板/主窗口、正常退出会尝试释放本人控制权；退出最多等待 3 秒，超时不声称释放成功。
+
+显示层是原生 SwiftUI 外壳和 WKWebView 的本地 `hermes-botscreen://viewer/` 资源。noVNC 1.6.0 及 pako 固定版本离线打包，许可证和下载校验在 `Resources/BotScreen/VENDOR.md`。页面只加载本地模块，禁止外部导航和来自其他 frame/origin 的消息；票据 URL 不写日志，显示错误不包含 WebSocket 的原始地址。

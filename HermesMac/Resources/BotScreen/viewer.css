@@ -1,0 +1,6 @@
+html,body,#screen{width:100%;height:100%;margin:0;overflow:hidden;background:#16181b}#screen{display:flex;align-items:center;justify-content:center}canvas{outline:none}
+/* Watch mode uses the system arrow rather than noVNC's remote/custom cursor. */
+html.watch-only,html.watch-only body,html.watch-only #screen,html.watch-only #screen *{cursor:default!important}
+html.watch-only #screen>*{pointer-events:none}
+/* A fallback cursor is a separate canvas attached by noVNC directly to body. */
+html.watch-only body>canvas{visibility:hidden!important}

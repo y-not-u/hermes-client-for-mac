@@ -3,6 +3,7 @@ import AppKit
 
 struct ChatView: View {
     var store: AppStore
+    var onOpenComputer: (() -> Void)? = nil
     @State private var imagePreview: ImagePreview?
     @State private var pendingInitialScroll: ConversationKey?
     @State private var isAtBottom = true
@@ -32,6 +33,7 @@ struct ChatView: View {
                     .lineLimit(1)
 
                 Text(store.profileTitle)
+                    .lineLimit(1)
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 6)
@@ -40,11 +42,22 @@ struct ChatView: View {
 
                 if let c = store.current, c.generating {
                     Text("· 正在生成")
+                        .lineLimit(1)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer()
+
+                if let onOpenComputer, !store.botScreen.isOpen {
+                    Button(action: onOpenComputer) {
+                        Label("打开电脑", systemImage: "desktopcomputer")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("查看当前角色的 Linux 桌面")
+                    .accessibilityIdentifier("botScreen.open")
+                }
             }
             .padding(.horizontal, 20)
             .padding(.top, 14)

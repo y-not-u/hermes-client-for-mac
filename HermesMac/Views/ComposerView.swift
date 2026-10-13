@@ -55,72 +55,27 @@ struct ComposerView: View {
                     .frame(minHeight: max(38, ChatTypography.size(fontSize) + 18), maxHeight: 120)
                 }
 
-                // Bottom toolbar inside card
-                HStack(alignment: .center) {
-                    HStack(spacing: 5) {
-                        KeyCap("Enter")
-                        Text(isRunning ? "引导" : "发送")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.tertiary)
-
-                        Text("·")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.tertiary)
-
-                        HStack(spacing: 2) {
-                            KeyCap("Shift")
-                            Text("+")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.tertiary)
-                            KeyCap("Enter")
-                        }
-                        Text("换行")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.tertiary)
+                // Keyboard hints never wrap letter by letter when the desktop narrows chat.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        keyboardHints
+                        Spacer(minLength: 8)
+                        actionControls
                     }
-
-                    Spacer()
-
-                    ModelPickerView(store: store)
-
-                    if isRunning {
-                        Button {
-                            store.stopCurrent()
-                        } label: {
-                            ZStack {
-                                Circle()
-                                    .fill(Color(red: 0.88, green: 0.51, blue: 0.28))
-                                    .frame(width: 28, height: 28)
-                                    .shadow(color: Color(red: 0.88, green: 0.51, blue: 0.28).opacity(0.32), radius: 2.5, y: 1.2)
-
-                                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                                    .fill(Color.white)
-                                    .frame(width: 9, height: 9)
-                            }
+                    VStack(alignment: .leading, spacing: 8) {
+                        compactKeyboardHints
+                        HStack { Spacer(minLength: 0); actionControls }
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack { Spacer(minLength: 0); ModelPickerView(store: store) }
+                        HStack(spacing: 8) {
+                            compactKeyboardHints
+                            Spacer(minLength: 0)
+                            submitControl
                         }
-                        .buttonStyle(.plain)
-                        .disabled(!store.connected)
-                        .help("停止当前生成")
-                    } else {
-                        Button {
-                            store.submitDraft()
-                        } label: {
-                            ZStack {
-                                Circle()
-                                    .fill(store.canSend ? Color.accentColor : Color.secondary.opacity(0.15))
-                                    .frame(width: 28, height: 28)
-                                    .shadow(color: store.canSend ? Color.accentColor.opacity(0.35) : Color.clear, radius: 3, y: 1.5)
-
-                                Image(systemName: "arrow.up")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundStyle(store.canSend ? Color.white : Color.secondary.opacity(0.6))
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(!store.canSend)
-                        .help(store.canSend ? "发送消息 (Enter)" : "无法发送")
                     }
                 }
+
             }
             .padding(10)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
@@ -137,6 +92,76 @@ struct ComposerView: View {
         .padding(.bottom, 16)
         .padding(.top, 4)
     }
+
+    private var keyboardHints: some View {
+        HStack(spacing: 5) {
+            KeyCap("Enter")
+            Text(isRunning ? "引导" : "发送")
+            Text("·")
+            HStack(spacing: 2) { KeyCap("Shift"); Text("+"); KeyCap("Enter") }
+            Text("换行")
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(.tertiary)
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var compactKeyboardHints: some View {
+        Text(isRunning ? "Enter 引导 · ⇧Enter 换行" : "Enter 发送 · ⇧Enter 换行")
+            .font(.system(size: 10))
+            .foregroundStyle(.tertiary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var actionControls: some View {
+        HStack(spacing: 8) {
+            ModelPickerView(store: store)
+            submitControl
+        }
+    }
+
+    @ViewBuilder private var submitControl: some View {
+        if isRunning {
+            Button {
+                store.stopCurrent()
+            } label: {
+                ZStack {
+                    Circle()
+                        .fill(Color(red: 0.88, green: 0.51, blue: 0.28))
+                        .frame(width: 28, height: 28)
+                        .shadow(color: Color(red: 0.88, green: 0.51, blue: 0.28).opacity(0.32), radius: 2.5, y: 1.2)
+
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(Color.white)
+                        .frame(width: 9, height: 9)
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(!store.connected)
+            .help("停止当前生成")
+        } else {
+            Button {
+                store.submitDraft()
+            } label: {
+                ZStack {
+                    Circle()
+                        .fill(store.canSend ? Color.accentColor : Color.secondary.opacity(0.15))
+                        .frame(width: 28, height: 28)
+                        .shadow(color: store.canSend ? Color.accentColor.opacity(0.35) : Color.clear, radius: 3, y: 1.5)
+
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(store.canSend ? Color.white : Color.secondary.opacity(0.6))
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(!store.canSend)
+            .help(store.canSend ? "发送消息 (Enter)" : "无法发送")
+        }
+    }
+
 }
 
 private struct QuickChip: View {
@@ -157,6 +182,7 @@ private struct QuickChip: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
+            .lineLimit(1)
             .padding(.horizontal, 8)
             .padding(.vertical, 3.5)
             .background(

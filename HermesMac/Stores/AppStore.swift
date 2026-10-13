@@ -3,6 +3,7 @@ import Observation
 import AppKit
 
 @MainActor @Observable final class AppStore {
+    let botScreen = BotScreenStore()
     let local: LocalState
     var address: String
     var profiles: [Profile] = []
@@ -176,8 +177,13 @@ import AppKit
             if let token { try await next.setSessionToken(token) }
             guard connectionAttempt == attempt else { return }
             let changed = next.service != service
+            if changed {
+                await botScreen.close()
+                guard connectionAttempt == attempt else { return }
+            }
             generation = attempt; activated = true
             let epoch = attempt
+            botScreen.disconnected()
             client?.disconnect(); client = next; connected = false; connecting = true; connection = "连接中…"; error = nil
             modelCatalogs = [:]; modelErrors = [:]; modelLoading = []; modelSwitching = []; modelRevisions = [:]; modelConfirmation = nil
             busyProfiles = []; routes = [:]; earlyFrames = [:]; buffered = []; flushTask?.cancel(); flushTask = nil
@@ -252,6 +258,7 @@ import AppKit
     private func installCallbacks(_ client: HermesClient, epoch: UUID) {
         client.onFrame = { [weak self] frame in
             guard let self, self.generation == epoch else { return }
+            if self.botScreen.receive(frame) { return }
             self.buffered.append(frame)
             if self.flushTask == nil {
                 self.flushTask = Task { [weak self] in
@@ -266,6 +273,7 @@ import AppKit
             // Flush received frames before declaring the stream uncertain.
             self.flushTask?.cancel(); self.flushTask = nil
             let frames = self.buffered; self.buffered = []; frames.forEach { self.route($0) }
+            self.botScreen.disconnected()
             self.connected = false; self.connection = "已断开 · 等待重连"; self.error = error.localizedDescription
             for c in self.conversations.values { if c.generating { c.uncertain = true }; c.runtimeID = nil }
             self.scheduleReconnect(client, epoch: epoch)
@@ -278,6 +286,7 @@ import AppKit
         draft = local.state(service).drafts[LocalState.draftKey(profile: profile, session: selectedSession)] ?? ""
         local.update(service) { $0.selectedProfile = profile }
         if let pending = conversations.values.first(where: { $0.key.profile == profile && !$0.approvals.isEmpty }) { selectedSession = pending.key.storedID; restoreDraft() }
+        await botScreen.configure(client: client, profile: profile, connected: connected)
         await loadSessions(profile: profile)
         if let selectedSession { await openSession(selectedSession, profile: profile) }
     }

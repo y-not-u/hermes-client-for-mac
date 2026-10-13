@@ -3,6 +3,7 @@ import AppKit
 
 struct ContentView: View {
     var store: AppStore
+    @State private var computerExpanded = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -17,16 +18,83 @@ struct ContentView: View {
                 SessionListView(store: store)
                     .frame(minWidth: 220, idealWidth: 260, maxWidth: 380)
 
-                ChatView(store: store)
-                    .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+                ChatComputerSplit(isOpen: store.botScreen.isOpen, expanded: computerExpanded) {
+                    ChatView(store: store, onOpenComputer: {
+                        Task { await store.botScreen.open() }
+                    })
+                } computer: {
+                    BotScreenPane(store: store.botScreen, profileTitle: store.profileTitle,
+                                  expanded: $computerExpanded)
+                }
+                .onChange(of: store.botScreen.isOpen) { _, isOpen in
+                    if !isOpen { computerExpanded = false }
+                }
             }
         }
         .background(WindowAccessor { window in
+            window.identifier = AppDelegate.mainWindowIdentifier
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
             window.styleMask.insert(.fullSizeContentView)
             window.isMovableByWindowBackground = true
         })
+    }
+}
+
+/// Explicit widths keep the viewer mounted while the chat collapses. SwiftUI's
+/// HSplitView otherwise retains its previous divider position despite a zero-width chat.
+struct ChatComputerSplit<Chat: View, Computer: View>: View {
+    let isOpen: Bool
+    let expanded: Bool
+    @ViewBuilder var chat: () -> Chat
+    @ViewBuilder var computer: () -> Computer
+    @State private var fraction: CGFloat = 0.5
+    @State private var dragOrigin: CGFloat?
+
+    var body: some View {
+        GeometryReader { geometry in
+            let total = geometry.size.width
+            let dividerWidth: CGFloat = isOpen && !expanded ? 1 : 0
+            let available = max(0, total - dividerWidth)
+            let minimum = min(250, available / 2)
+            let normalChatWidth = min(max(available * fraction, minimum), available - minimum)
+            let chatWidth = !isOpen ? total : (expanded ? 0 : normalChatWidth)
+            HStack(spacing: 0) {
+                chat()
+                    .frame(width: chatWidth, height: geometry.size.height)
+                    .clipped()
+                    .opacity(isOpen && expanded ? 0 : 1)
+                    .allowsHitTesting(!(isOpen && expanded))
+                    .accessibilityHidden(isOpen && expanded)
+                if isOpen {
+                    Divider()
+                        .frame(width: dividerWidth)
+                        .overlay {
+                            Color.clear.frame(width: 9).contentShape(Rectangle())
+                                .gesture(DragGesture(minimumDistance: 0)
+                                    .onChanged { value in
+                                        guard !expanded, available > 0 else { return }
+                                        if dragOrigin == nil { dragOrigin = fraction }
+                                        fraction = min(1, max(0, (dragOrigin ?? fraction) + value.translation.width / available))
+                                    }
+                                    .onEnded { _ in dragOrigin = nil })
+                        }
+                        .opacity(expanded ? 0 : 1)
+                        .allowsHitTesting(!expanded)
+                        .accessibilityLabel("调整聊天与电脑宽度")
+                        .accessibilityAdjustableAction { direction in
+                            switch direction {
+                            case .increment: fraction = min(1, fraction + 0.05)
+                            case .decrement: fraction = max(0, fraction - 0.05)
+                            @unknown default: break
+                            }
+                        }
+                    computer()
+                        .frame(width: max(0, total - chatWidth - dividerWidth), height: geometry.size.height)
+                        .clipped()
+                }
+            }
+        }
     }
 }
 

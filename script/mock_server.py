@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 from aiohttp import web
+from mock_display import DisplayFixture
 
 class Fixture:
     def __init__(self):
@@ -11,6 +12,7 @@ class Fixture:
         self.reset()
 
     def reset(self):
+        self.display = DisplayFixture(self)
         self.sessions = {}
         self.requests = []
         self.history_reads = []
@@ -44,6 +46,7 @@ class Fixture:
                 await ws.close()
             self.reset()
         elif action == 'configure':
+            await self.display.control(body)
             self.native = body.get('native', self.native)
             self.create_delay = body.get('create_delay', self.create_delay)
             self.complete_on_resume = body.get('complete_on_resume', self.complete_on_resume)
@@ -87,7 +90,7 @@ class Fixture:
             for ws in list(self.sockets):
                 await ws.send_json(frame)
         return web.json_response({'requests': self.requests, 'responses': self.responses, 'history_reads': self.history_reads, 'session_reads': self.session_reads, 'session_writes': self.session_writes,
-            'refreshes': self.refreshes, 'tickets': self.tickets})
+            'refreshes': self.refreshes, 'tickets': self.tickets, **self.display.report()})
 
     async def rest(self, request):
         path = request.path
@@ -162,6 +165,9 @@ class Fixture:
         params = frame.get('params', {})
         self.requests.append({'method': method, 'params': params})
         result = {}
+        if method.startswith('display.'):
+            await self.display.rpc(ws, frame)
+            return
         if method == 'model.options':
             session = next((s for s in self.sessions.values() if s['session_id'] == params.get('session_id')), {})
             result = {'provider': session.get('model_provider', 'fixture'),
@@ -272,6 +278,7 @@ async def main():
     app = web.Application()
     app.router.add_post('/__test', fixture.control)
     app.router.add_get('/api/ws', fixture.websocket)
+    app.router.add_get('/api/display/ws', lambda request: fixture.display.websocket(request))
     app.router.add_route('*', '/api/sessions/{sid}/messages', fixture.rest)
     app.router.add_route('*', '/{tail:.*}', fixture.rest)
     runner = web.AppRunner(app)
