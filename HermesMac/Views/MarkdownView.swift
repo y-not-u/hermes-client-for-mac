@@ -182,56 +182,65 @@ private struct MarkdownTextBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(text.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
-                if line.hasPrefix("### ") {
-                    inline(String(line.dropFirst(4)))
-                        .font(.system(size: ChatTypography.scaled(14, for: fontSize), weight: .bold))
-                        .padding(.top, 6)
-                } else if line.hasPrefix("## ") {
-                    inline(String(line.dropFirst(3)))
-                        .font(.system(size: ChatTypography.scaled(16, for: fontSize), weight: .bold))
-                        .padding(.top, 8)
-                } else if line.hasPrefix("# ") {
-                    inline(String(line.dropFirst(2)))
-                        .font(.system(size: ChatTypography.scaled(18, for: fontSize), weight: .bold))
-                        .padding(.top, 10)
-                } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
-                    HStack(alignment: .firstTextBaseline, spacing: 7) {
-                        Circle()
-                            .fill(Color.primary.opacity(0.6))
-                            .frame(width: 4.5, height: 4.5)
-                            .offset(y: -1)
-                        inline(String(line.dropFirst(2)))
-                            .font(.system(size: ChatTypography.scaled(13.5, for: fontSize)))
-                    }
-                    .padding(.leading, 8)
-                } else if line.hasPrefix("> ") {
-                    HStack(alignment: .top, spacing: 10) {
-                        Capsule()
-                            .fill(Color.accentColor.opacity(0.7))
-                            .frame(width: 3)
-                        inline(String(line.dropFirst(2)))
-                            .font(.system(size: ChatTypography.scaled(13.5, for: fontSize)))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 3)
-                    .padding(.horizontal, 6)
-                    .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                } else if line == "---" || line == "***" {
-                    Rectangle()
-                        .fill(Color(nsColor: .separatorColor).opacity(0.5))
-                        .frame(height: 1)
-                        .padding(.vertical, 6)
-                } else if line.isEmpty {
-                    Color.clear.frame(height: 4)
-                } else {
-                    inline(line)
-                        .font(.system(size: ChatTypography.scaled(13.5, for: fontSize)))
-                        .lineSpacing(2.5)
+            ForEach(Array(MarkdownTable.blocks(in: text).enumerated()), id: \.offset) { _, block in
+                switch block {
+                case .table(let table):
+                    MarkdownTableView(table: table, fontSize: ChatTypography.scaled(13.5, for: fontSize))
+                case .line(let line):
+                    lineView(line)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private func lineView(_ line: String) -> some View {
+        if line.hasPrefix("### ") {
+            inline(String(line.dropFirst(4)))
+                .font(.system(size: ChatTypography.scaled(14, for: fontSize), weight: .bold))
+                .padding(.top, 6)
+        } else if line.hasPrefix("## ") {
+            inline(String(line.dropFirst(3)))
+                .font(.system(size: ChatTypography.scaled(16, for: fontSize), weight: .bold))
+                .padding(.top, 8)
+        } else if line.hasPrefix("# ") {
+            inline(String(line.dropFirst(2)))
+                .font(.system(size: ChatTypography.scaled(18, for: fontSize), weight: .bold))
+                .padding(.top, 10)
+        } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Circle()
+                    .fill(Color.primary.opacity(0.6))
+                    .frame(width: 4.5, height: 4.5)
+                    .offset(y: -1)
+                inline(String(line.dropFirst(2)))
+                    .font(.system(size: ChatTypography.scaled(13.5, for: fontSize)))
+            }
+            .padding(.leading, 8)
+        } else if line.hasPrefix("> ") {
+            HStack(alignment: .top, spacing: 10) {
+                Capsule()
+                    .fill(Color.accentColor.opacity(0.7))
+                    .frame(width: 3)
+                inline(String(line.dropFirst(2)))
+                    .font(.system(size: ChatTypography.scaled(13.5, for: fontSize)))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 3)
+            .padding(.horizontal, 6)
+            .background(Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        } else if line == "---" || line == "***" {
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor).opacity(0.5))
+                .frame(height: 1)
+                .padding(.vertical, 6)
+        } else if line.isEmpty {
+            Color.clear.frame(height: 4)
+        } else {
+            inline(line)
+                .font(.system(size: ChatTypography.scaled(13.5, for: fontSize)))
+                .lineSpacing(2.5)
+        }
     }
 
     private func inline(_ value: String) -> Text {
