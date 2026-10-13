@@ -18,6 +18,7 @@ jobs:
   build:
     name: Build macOS Application
     runs-on: macos-15-intel
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -32,12 +33,16 @@ jobs:
         run: |
           ./script/test.sh
 
-      - name: Build Application (Release)
+      - name: Set up CI Signing
+        timeout-minutes: 2
         # The helper authenticates its parent using the signing certificate.
         # Ad hoc signing cannot satisfy that requirement.
         # No stored certificate or secrets are needed for this disposable identity.
         run: |
           ./script/setup_ci_signing.sh
+
+      - name: Build Application (Release)
+        run: |
           xcodebuild -project HermesMac.xcodeproj \
             -scheme HermesMac \
             -configuration Release \
