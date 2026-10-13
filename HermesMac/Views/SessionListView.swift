@@ -7,6 +7,9 @@ struct SessionListView: View {
     @State private var title = ""
     @State private var renameProfile = ""
     @State private var renameService = ""
+    @State private var deleting: SessionSummary?
+    @State private var deleteProfile = ""
+    @State private var deleteService = ""
     @FocusState private var isSearchFocused: Bool
 
     private var currentSessions: [SessionSummary] {
@@ -142,6 +145,17 @@ struct SessionListView: View {
                                         title = session.title
                                         renameProfile = store.selectedProfile
                                         renameService = store.service
+                                    },
+                                    canRemove: store.canRemoveSession(session.id, profile: store.selectedProfile),
+                                    onArchive: {
+                                        let profile = store.selectedProfile
+                                        let service = store.service
+                                        Task { await store.removeSession(session, archive: true, profile: profile, service: service) }
+                                    },
+                                    onDelete: {
+                                        deleting = session
+                                        deleteProfile = store.selectedProfile
+                                        deleteService = store.service
                                     }
                                 )
                                 .id(session.id)
@@ -177,6 +191,19 @@ struct SessionListView: View {
             }
         }
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.35))
+        .alert("删除会话？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
+            Button("取消", role: .cancel) { deleting = nil }
+            Button("删除", role: .destructive) {
+                if let row = deleting {
+                    let profile = deleteProfile
+                    let service = deleteService
+                    Task { await store.removeSession(row, archive: false, profile: profile, service: service) }
+                }
+                deleting = nil
+            }
+        } message: {
+            Text("将永久删除“\(deleting?.title ?? "")”及其历史消息，此操作无法撤销。")
+        }
         .alert("重命名会话", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("标题", text: $title)
             Button("取消", role: .cancel) { renaming = nil }
@@ -200,6 +227,9 @@ private struct SessionCardItem: View {
     let isSelected: Bool
     let onSelect: () -> Void
     let onRename: () -> Void
+    let canRemove: Bool
+    let onArchive: () -> Void
+    let onDelete: () -> Void
 
     @State private var isHovered = false
 
@@ -282,6 +312,11 @@ private struct SessionCardItem: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(session.id, forType: .string)
             }
+            Divider()
+            Button(action: onArchive) { Label("归档", systemImage: "archivebox") }
+                .disabled(!canRemove)
+            Button(role: .destructive, action: onDelete) { Label("删除", systemImage: "trash") }
+                .disabled(!canRemove)
         }
     }
 

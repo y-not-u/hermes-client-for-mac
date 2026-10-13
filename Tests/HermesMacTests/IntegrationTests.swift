@@ -58,6 +58,80 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         ])])
     }
 
+    func testArchiveRemovesCurrentSessionAndPreservesDraft() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "archive me"; await store.send()
+        let c = try XCTUnwrap(store.current)
+        let row = try XCTUnwrap(store.sessions["a"]?.first { $0.id == c.key.storedID })
+        XCTAssertFalse(store.canRemoveSession(row.id, profile: "a"))
+        try await emit(row.id, type: "message.complete", text: "done")
+        try await eventually { !c.generating }
+        store.draft = "saved draft"
+        await store.removeSession(row, archive: true, profile: "a", service: client.service)
+        XCTAssertNil(store.selectedSession)
+        XCTAssertNil(store.conversations[c.key])
+        XCTAssertNil(store.local.state(client.service).lastSession["a"])
+        XCTAssertEqual(store.local.state(client.service).drafts[LocalState.draftKey(profile: "a", session: row.id)], "saved draft")
+        await store.loadSessions(profile: "a", query: row.id)
+        XCTAssertFalse(store.sessions["a", default: []].contains { $0.id == row.id })
+        let stats = try await fixture(["action": .string("stats")])
+        let write = try XCTUnwrap(stats["session_writes"].array.last)
+        XCTAssertEqual(write["method"].string, "PATCH")
+        XCTAssertEqual(write["profile"].string, "a")
+        XCTAssertTrue(write["body"]["archived"].bool)
+    }
+
+    func testDeleteUsesOriginalProfileAndClearsOnlyItsDraft() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        let row = SessionSummary(id: "same-id", title: "delete me")
+        _ = try await fixture(["action": .string("configure"), "session_rows": .array([
+            .object(["id": .string(row.id), "title": .string(row.title), "profile": .string("a")]),
+            .object(["id": .string(row.id), "title": .string(row.title), "profile": .string("b")])
+        ])])
+        await store.loadSessions(profile: "a")
+        store.local.update(client.service) {
+            $0.lastSession["a"] = row.id
+            $0.drafts[LocalState.draftKey(profile: "a", session: row.id)] = "remove"
+            $0.drafts[LocalState.draftKey(profile: "b", session: row.id)] = "keep"
+        }
+        await store.selectProfile("b")
+        store.draft = "current draft"
+        await store.removeSession(row, archive: false, profile: "a", service: client.service)
+        XCTAssertEqual(store.selectedProfile, "b")
+        XCTAssertEqual(store.draft, "current draft")
+        XCTAssertFalse(store.sessions["a", default: []].contains { $0.id == row.id })
+        XCTAssertTrue(store.sessions["b", default: []].contains { $0.id == row.id })
+        XCTAssertNil(store.local.state(client.service).drafts[LocalState.draftKey(profile: "a", session: row.id)])
+        XCTAssertEqual(store.local.state(client.service).drafts[LocalState.draftKey(profile: "b", session: row.id)], "keep")
+        let stats = try await fixture(["action": .string("stats")])
+        XCTAssertEqual(stats["session_writes"].array.last?["method"].string, "DELETE")
+        XCTAssertEqual(stats["session_writes"].array.last?["profile"].string, "a")
+    }
+
+    func testFailedSessionRemovalPreservesListAndSelection() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        await store.openSession("cli-readonly")
+        store.draft = "keep draft"
+        let row = try XCTUnwrap(store.sessions["a"]?.first { $0.id == "cli-readonly" })
+        await store.removeSession(row, archive: false, profile: "a", service: "http://other-service")
+        var stats = try await fixture(["action": .string("stats")])
+        XCTAssertTrue(stats["session_writes"].array.isEmpty)
+        _ = try await fixture(["action": .string("configure"), "session_write_error": .bool(true)])
+        for archive in [true, false] {
+            await store.removeSession(row, archive: archive, profile: "a", service: client.service)
+            XCTAssertEqual(store.selectedSession, row.id)
+            XCTAssertEqual(store.draft, "keep draft")
+            XCTAssertTrue(store.sessions["a", default: []].contains { $0.id == row.id })
+            XCTAssertNotNil(store.error)
+            XCTAssertTrue(store.canRemoveSession(row.id, profile: "a"))
+        }
+        stats = try await fixture(["action": .string("stats")])
+        XCTAssertEqual(stats["session_writes"].array.count, 2)
+    }
+
     func testRedirectPreservesPartialReplyAndContinuesBelowCorrection() async throws {
         let (store, client, defaults, name) = try await prepare()
         defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }

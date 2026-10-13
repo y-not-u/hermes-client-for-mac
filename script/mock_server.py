@@ -16,6 +16,8 @@ class Fixture:
         self.history_reads = []
         self.session_reads = []
         self.session_rows = []
+        self.session_writes = []
+        self.session_write_error = False
         self.responses = []
         self.counter = 0
         self.native = False
@@ -42,6 +44,7 @@ class Fixture:
             self.create_delay = body.get('create_delay', self.create_delay)
             self.complete_on_resume = body.get('complete_on_resume', self.complete_on_resume)
             self.session_rows = body.get('session_rows', self.session_rows)
+            self.session_write_error = body.get('session_write_error', self.session_write_error)
             for key in ('correction_status', 'correction_delay', 'correction_error', 'steer_status', 'complete_on_correction', 'drop_on_correction'):
                 if key in body:
                     setattr(self, key, body[key])
@@ -72,7 +75,7 @@ class Fixture:
                     session['messages'].append({'role': 'assistant', 'content': text})
             for ws in list(self.sockets):
                 await ws.send_json(frame)
-        return web.json_response({'requests': self.requests, 'responses': self.responses, 'history_reads': self.history_reads, 'session_reads': self.session_reads,
+        return web.json_response({'requests': self.requests, 'responses': self.responses, 'history_reads': self.history_reads, 'session_reads': self.session_reads, 'session_writes': self.session_writes,
             'refreshes': self.refreshes, 'tickets': self.tickets})
 
     async def rest(self, request):
@@ -93,7 +96,7 @@ class Fixture:
         if path in ['/api/sessions', '/api/sessions/search']:
             self.session_reads.append({'path': path, **dict(request.query)})
             profile = request.query.get('profile')
-            rows = [{'id': sid, 'title': sid} for sid, s in self.sessions.items() if s['profile'] == profile]
+            rows = [{'id': sid, 'title': sid, 'archived': s.get('archived', False)} for sid, s in self.sessions.items() if s['profile'] == profile]
             rows.extend(r for r in self.session_rows if r['profile'] == profile)
             if profile == 'a':
                 rows.append({'id': 'cli-readonly', 'title': 'CLI history'})
@@ -101,6 +104,8 @@ class Fixture:
             rows = [r for r in rows if r.get('source') not in excluded]
             if path.endswith('search'):
                 rows = [r for r in rows if request.query.get('q', '') in r['title']]
+            else:
+                rows = [r for r in rows if not r.get('archived')]
             offset = int(request.query.get('offset', 0))
             limit = int(request.query.get('limit', 40))
             rows = rows[offset:offset + limit]
@@ -117,6 +122,25 @@ class Fixture:
             else:
                 messages = messages[offset:offset + limit]
             return web.json_response({'messages': messages})
+        if path.startswith('/api/sessions/') and request.method in ('PATCH', 'DELETE'):
+            sid = path.rsplit('/', 1)[-1]
+            body = await request.json() if request.method == 'PATCH' else {}
+            profile = body.get('profile') if request.method == 'PATCH' else request.query.get('profile')
+            self.session_writes.append({'session_id': sid, 'profile': profile, 'method': request.method, 'body': body})
+            if self.session_write_error:
+                return web.json_response({'error': 'write refused'}, status=409)
+            if sid in self.sessions and self.sessions[sid]['profile'] == profile:
+                if request.method == 'DELETE':
+                    del self.sessions[sid]
+                else:
+                    self.sessions[sid].update(body)
+            if request.method == 'DELETE':
+                self.session_rows = [r for r in self.session_rows if r['id'] != sid or r['profile'] != profile]
+            else:
+                for row in self.session_rows:
+                    if row['id'] == sid and row['profile'] == profile:
+                        row.update(body)
+            return web.json_response({'ok': True})
         return web.json_response({'ok': True})
 
     async def rpc(self, ws, frame):

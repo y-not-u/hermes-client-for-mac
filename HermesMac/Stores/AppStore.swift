@@ -34,6 +34,7 @@ import AppKit
     private var searchTask: Task<Void, Never>?
     private var listRevision: [String: UUID] = [:]
     private var busyProfiles: Set<String> = []
+    private var sessionMutations: Set<ConversationKey> = []
     private let historyPageSize = 20
     init(local: LocalState? = nil, makeClient: ((String) throws -> HermesClient)? = nil,
          isAppActive: @escaping @MainActor () -> Bool = { NSApp?.isActive ?? true },
@@ -58,6 +59,7 @@ import AppKit
         connected && !selectedProfile.isEmpty && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         && !busyProfiles.contains(selectedProfile) && current?.readOnlyReason == nil && current?.loading != true
         && (selectedSession == nil || current != nil)
+        && (currentKey.map { !sessionMutations.contains($0) } ?? true)
         && !conversations.values.contains { $0.key.profile == selectedProfile && ($0.uncertain || ($0.generating && $0 !== current)) }
     }
     func profileBusy(_ profile: String) -> Bool { busyProfiles.contains(profile) || conversations.values.contains { $0.key.profile == profile && ($0.generating || $0.uncertain) } }
@@ -208,18 +210,20 @@ import AppKit
             // Filter at the source so cron runs do not consume list/search page slots.
             let result = try await client.rest(path, query: [URLQueryItem(name: "profile", value: profile), URLQueryItem(name: "limit", value: "40"), URLQueryItem(name: "offset", value: String(offset)), URLQueryItem(name: "order", value: "recent"), URLQueryItem(name: "q", value: query), URLQueryItem(name: "exclude_sources", value: "cron")])
             guard epoch == generation, listRevision[profile] == revision else { return }
-            let rows = result[query.isEmpty ? "sessions" : "results"].array.map(SessionSummary.init)
+            let rawRows = result[query.isEmpty ? "sessions" : "results"].array
+            let rows = rawRows.filter { !$0["archived"].bool }.map(SessionSummary.init)
             if more { sessions[profile, default: []].append(contentsOf: rows.filter { row in !(sessions[profile] ?? []).contains(where: { $0.id == row.id }) }) }
             else {
                 let open = (sessions[profile] ?? []).filter { row in conversations.values.contains { $0.key.profile == profile && $0.key.storedID == row.id && ($0.generating || $0.messages.isEmpty) } && !rows.contains(where: { $0.id == row.id }) }
                 sessions[profile] = query.isEmpty ? open + rows : rows
             }
-            listHasMore[profile] = rows.count == 40 && query.isEmpty
+            listHasMore[profile] = rawRows.count == 40 && query.isEmpty
         } catch { guard epoch == generation else { return }; self.error = error.localizedDescription }
     }
     func openSession(_ id: String, profile: String? = nil) async {
         let owner = profile ?? selectedProfile
         guard owner == selectedProfile, let client else { return }
+        guard !sessionMutations.contains(ConversationKey(service: service, profile: owner, storedID: id)) else { return }
         navigation = UUID(); selectedSession = id; restoreDraft(); local.update(service) { $0.lastSession[owner] = id }
         let key = ConversationKey(service: service, profile: owner, storedID: id)
         if let c = conversations[key] { c.unread = false; if c.runtimeID != nil || c.loading { return } }
@@ -433,6 +437,41 @@ import AppKit
             guard epoch == generation else { return }
             if let index = sessions[profile]?.firstIndex(where: { $0.id == row.id }) { sessions[profile]?[index].title = title }
         } catch { guard epoch == generation else { return }; self.error = error.localizedDescription }
+    }
+    func canRemoveSession(_ id: String, profile: String) -> Bool {
+        let key = ConversationKey(service: service, profile: profile, storedID: id)
+        let conversation = conversations[key]
+        return connected && !busyProfiles.contains(profile) && !sessionMutations.contains(key)
+            && conversation?.generating != true && conversation?.uncertain != true && conversation?.loading != true
+    }
+    func removeSession(_ row: SessionSummary, archive: Bool, profile: String, service expectedService: String) async {
+        guard expectedService == service, let client, canRemoveSession(row.id, profile: profile) else { return }
+        let epoch = generation
+        let key = ConversationKey(service: expectedService, profile: profile, storedID: row.id)
+        sessionMutations.insert(key)
+        defer { sessionMutations.remove(key) }
+        do {
+            if archive {
+                _ = try await client.rest("/api/sessions/\(row.id)", method: "PATCH",
+                    body: .object(["profile": .string(profile), "archived": .bool(true)]))
+            } else {
+                _ = try await client.rest("/api/sessions/\(row.id)", method: "DELETE",
+                    query: [URLQueryItem(name: "profile", value: profile)])
+            }
+            guard epoch == generation else { return }
+            sessions[profile]?.removeAll { $0.id == row.id }
+            conversations.removeValue(forKey: key)
+            routes = routes.filter { $0.value != key }
+            if selectedProfile == profile && selectedSession == row.id { newSession() }
+            local.update(expectedService) {
+                if $0.lastSession[profile] == row.id { $0.lastSession.removeValue(forKey: profile) }
+                if !archive { $0.drafts.removeValue(forKey: LocalState.draftKey(profile: profile, session: row.id)) }
+            }
+            await loadSessions(profile: profile, query: selectedProfile == profile ? search : "")
+        } catch {
+            guard epoch == generation else { return }
+            self.error = "\(archive ? "归档" : "删除")会话失败：\(error.localizedDescription)"
+        }
     }
     private func route(_ frame: JSON) {
         let params = frame["params"]; let id = params["session_id"].string

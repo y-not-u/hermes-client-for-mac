@@ -13,6 +13,8 @@
 | GET `/api/sessions/{storedID}/messages?profile=…` | 首屏读取最新历史、按需读取更早记录，每页 20 条，`inline_images=false` |
 | GET `/api/fs/read-data-url?path=…&profile=…&session_id=…` | 按助手回答中的 `MEDIA:` 路径读取图片，返回 `dataUrl`；使用持久会话 ID 和现有认证 |
 | PATCH `/api/sessions/{storedID}` | JSON body 含 `profile` 和 `title`，重命名 |
+| PATCH `/api/sessions/{storedID}` | JSON body 含 `profile` 和 `archived=true`，归档；列表与搜索隐藏归档记录 |
+| DELETE `/api/sessions/{storedID}?profile=…` | 删除确认后移除所属 profile 的会话历史 |
 | GET `/auth/native/authorize` | 系统浏览器，随机 loopback 回调、state、S256 PKCE |
 | POST `/auth/native/token` | `code` 和 `code_verifier` 换取凭据 |
 | POST `/auth/native/refresh` | `refresh_token` 和 `provider` 刷新，合并并发刷新请求 |
