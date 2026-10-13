@@ -412,6 +412,12 @@ struct ChatView: View {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
                     }
+                    .onChange(of: c.lastSubmittedMessageID) { _, _ in
+                        // Sending resumes following the conversation even when
+                        // the reader has scrolled up into earlier messages.
+                        isAtBottom = true
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }
                     .onChange(of: c.messages.count) { _, _ in
                         if isAtBottom && c.generating && !c.loading && imagePreview == nil {
                             proxy.scrollTo("bottom", anchor: .bottom)

@@ -5,6 +5,7 @@ import Observation
     let key: ConversationKey
     var runtimeID: String?
     var messages: [Message] = []
+    private(set) var lastSubmittedMessageID: String?
     var toolActivities: [ToolActivity] = []
     var tools: [ToolCall] { toolActivities.flatMap(\.tools) }
     var entries: [ConversationEntry] {
@@ -93,7 +94,9 @@ import Observation
     }
     func begin(_ text: String) {
         streamID = nil; activityID = nil; error = nil; generating = true; unread = false
-        messages.append(Message(role: "user", text: text))
+        let message = Message(role: "user", text: text)
+        messages.append(message)
+        lastSubmittedMessageID = message.id
     }
     func appendFollowUp(_ text: String, splitReply: Bool) -> String {
         let previous = (stream: streamID, activity: activityID)
@@ -103,6 +106,7 @@ import Observation
         followUpStreams[message.id] = previous
         message.deliveryStatus = "正在提交…"
         messages.append(message)
+        lastSubmittedMessageID = message.id
         return message.id
     }
     func setDelivery(_ id: String, _ status: String, preserveReply: Bool = false) {
