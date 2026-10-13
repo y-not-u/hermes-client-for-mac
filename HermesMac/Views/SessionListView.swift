@@ -56,7 +56,7 @@ struct SessionListView: View {
                 Button {
                     store.newSession()
                 } label: {
-                    Image(systemName: "square.and.pencil")
+                    Image(systemName: "plus")
                         .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
@@ -148,8 +148,12 @@ struct SessionListView: View {
                             if store.listHasMore[store.selectedProfile] == true {
                                 HStack {
                                     Spacer()
-                                    Button("加载更多") {
+                                    Button {
                                         Task { await store.loadSessions(profile: store.selectedProfile, more: true) }
+                                    } label: {
+                                        Text("加载更多")
+                                            .font(.system(size: ChatTypography.scaled(11, for: fontSize)))
+                                            .foregroundStyle(.secondary)
                                     }
                                     .buttonStyle(.bordered)
                                     .controlSize(.small)

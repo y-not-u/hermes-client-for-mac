@@ -99,13 +99,13 @@ struct ComposerView: View {
                         } label: {
                             ZStack {
                                 Circle()
-                                    .fill(Color.primary)
+                                    .fill(Color(red: 0.88, green: 0.51, blue: 0.28))
                                     .frame(width: 28, height: 28)
-                                    .shadow(color: Color.black.opacity(0.12), radius: 2, y: 1)
+                                    .shadow(color: Color(red: 0.88, green: 0.51, blue: 0.28).opacity(0.32), radius: 2.5, y: 1.2)
 
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundStyle(Color(nsColor: .controlBackgroundColor))
+                                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                                    .fill(Color.white)
+                                    .frame(width: 9, height: 9)
                             }
                         }
                         .buttonStyle(.plain)
