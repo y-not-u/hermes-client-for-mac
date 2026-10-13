@@ -114,6 +114,15 @@ struct CodeContentView: NSViewRepresentable {
         min(maximumHeight, contentHeight(for: code, fontSize: fontSize))
     }
 
+    // NSScrollView resizes NSTextView to its clip width while tiling. Keep the
+    // measured unwrapped width so long lines remain reachable after resizing.
+    final class UnwrappedTextView: NSTextView {
+        var contentWidth: CGFloat = 0
+        override func setFrameSize(_ newSize: NSSize) {
+            super.setFrameSize(NSSize(width: max(newSize.width, contentWidth), height: newSize.height))
+        }
+    }
+
     final class Coordinator {
         var renderedCode: String?
         var renderedFontSize: CGFloat?
@@ -130,11 +139,13 @@ struct CodeContentView: NSViewRepresentable {
         scroll.scrollerStyle = .overlay
         scroll.horizontalScroller = TransparentOverlayScroller()
         scroll.verticalScroller = TransparentOverlayScroller()
-        let text = NSTextView()
+        let text = UnwrappedTextView()
         text.isEditable = false
         text.isSelectable = true
         text.isRichText = false
+        text.autoresizingMask = []
         text.drawsBackground = false
+        text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         text.isHorizontallyResizable = true
         text.isVerticallyResizable = true
         text.textContainerInset = NSSize(width: Self.inset, height: Self.inset)
@@ -148,7 +159,7 @@ struct CodeContentView: NSViewRepresentable {
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard context.coordinator.renderedCode != code || context.coordinator.renderedFontSize != fontSize,
-              let text = scroll.documentView as? NSTextView else { return }
+              let text = scroll.documentView as? UnwrappedTextView else { return }
         context.coordinator.renderedCode = code
         context.coordinator.renderedFontSize = fontSize
         let paragraph = NSMutableParagraphStyle()
@@ -163,6 +174,7 @@ struct CodeContentView: NSViewRepresentable {
         let width = ceil(content.size().width) + Self.inset * 2
         let height = documentHeight
         text.textContainer?.containerSize = NSSize(width: max(1, width - Self.inset * 2), height: CGFloat.greatestFiniteMagnitude)
+        text.contentWidth = max(1, width)
         text.textStorage?.setAttributedString(content)
         text.frame = NSRect(x: 0, y: 0, width: max(1, width), height: height)
         scroll.hasVerticalScroller = height > Self.maximumHeight

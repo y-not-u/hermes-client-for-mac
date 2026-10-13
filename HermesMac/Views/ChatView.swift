@@ -633,9 +633,7 @@ private struct ToolCallGroup: View {
         VStack(spacing: 0) {
             if let latest = tools.last {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        isExpanded.toggle()
-                    }
+                    isExpanded.toggle()
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: latest.complete ? "checkmark.circle.fill" : "gearshape.2.fill")
@@ -669,7 +667,9 @@ private struct ToolCallGroup: View {
                 Divider().opacity(0.4)
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(spacing: 0) {
+                        // Measure the bounded list directly; nested lazy stacks can
+                        // repeatedly invalidate layout when a log is expanded.
+                        VStack(spacing: 0) {
                             ForEach(tools) { tool in
                                 ToolCallRow(title: tool.name, isComplete: tool.complete, details: tool.details)
                                     .id(tool.id)
@@ -680,7 +680,7 @@ private struct ToolCallGroup: View {
                         }
                     }
                     .cleanScrollBars()
-                    .frame(maxHeight: 240)
+                    .frame(height: 240)
                     .onAppear { scrollToLatest(proxy) }
                     .onChange(of: tools.last?.id) { _, _ in
                         withAnimation(.easeOut(duration: 0.2)) { scrollToLatest(proxy) }
@@ -696,7 +696,7 @@ private struct ToolCallGroup: View {
         }
         .onChange(of: isRunning) { _, running in
             if !running {
-                withAnimation(.easeInOut(duration: 0.2)) { isExpanded = false }
+                isExpanded = false
             }
         }
     }
@@ -706,20 +706,25 @@ private struct ToolCallGroup: View {
     }
 }
 
-private struct ToolCallRow: View {
+struct ToolCallRow: View {
     let title: String
     let isComplete: Bool
     let details: String
 
-    @State private var isExpanded = false
+    @State private var isExpanded: Bool
     @State private var isHovered = false
+
+    init(title: String, isComplete: Bool, details: String, isExpanded: Bool = false) {
+        self.title = title
+        self.isComplete = isComplete
+        self.details = details
+        _isExpanded = State(initialValue: isExpanded)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isExpanded.toggle()
-                }
+                isExpanded.toggle()
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: isComplete ? "checkmark.circle.fill" : "gearshape.2.fill")
@@ -747,8 +752,11 @@ private struct ToolCallRow: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(isHovered ? Color.secondary.opacity(0.06) : Color.clear)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .help(isExpanded ? "收起工具详情" : "展开工具详情")
+            .accessibilityValue(isExpanded ? "已展开" : "已收起")
             .onHover { isHovered = $0 }
 
             if isExpanded {
@@ -764,18 +772,14 @@ private struct ToolCallRow: View {
                     .padding(.horizontal, 10)
                     .padding(.top, 4)
 
-                    ScrollView(.horizontal, showsIndicators: true) {
-                        Text(details)
-                            .font(.system(size: 11.5, design: .monospaced))
-                            .foregroundStyle(Color(red: 0.85, green: 0.88, blue: 0.92))
-                            .padding(10)
-                            .textSelection(.enabled)
-                    }
-                    .cleanScrollBars()
-                    .environment(\.colorScheme, .dark)
-                    .background(Color(red: 0.12, green: 0.13, blue: 0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .padding(8)
+                    let log = CodeContentView(code: details, fontSize: 11.5)
+                    log
+                        .frame(height: log.viewportHeight)
+                        .frame(maxWidth: .infinity)
+                        .accessibilityLabel("工具日志，可选择和滚动")
+                        .background(Color(red: 0.12, green: 0.13, blue: 0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .padding(8)
                 }
             }
         }

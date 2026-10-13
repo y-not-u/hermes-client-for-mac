@@ -152,6 +152,40 @@ import AppKit
         XCTAssertTrue(codeScrolls.allSatisfy { ($0.documentView as? NSTextView)?.isSelectable == true })
     }
 
+    func testToolLogLayoutRemainsBoundedDuringResizeAndCollapse() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 600),
+                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let details = String(repeating: "long log entry ", count: 1_000) + "\n" + String(repeating: "line\n", count: 500)
+        func row(_ expanded: Bool, revision: Int) -> some View {
+            ToolCallRow(title: "terminal", isComplete: true, details: details,
+                        isExpanded: expanded).id(revision)
+        }
+        let hosting = NSHostingView(rootView: row(true, revision: 0))
+        window.contentView = hosting
+        func logs(in view: NSView) -> [NSScrollView] {
+            let own = (view as? NSScrollView).flatMap { $0.documentView is NSTextView ? $0 : nil }
+            return (own.map { [$0] } ?? []) + view.subviews.flatMap { logs(in: $0) }
+        }
+        let start = Date()
+        for revision in 0..<12 {
+            let expanded = revision.isMultiple(of: 2)
+            hosting.frame = NSRect(x: 0, y: 0, width: expanded ? 320 : 900, height: 600)
+            hosting.rootView = row(expanded, revision: revision)
+            hosting.layoutSubtreeIfNeeded()
+            let visibleLogs = logs(in: hosting)
+            if expanded {
+                XCTAssertEqual(visibleLogs.count, 1)
+                XCTAssertLessThanOrEqual(visibleLogs.first?.frame.height ?? .infinity, 360)
+                XCTAssertTrue((visibleLogs.first?.documentView?.frame.width ?? 0) > 900)
+            } else {
+                XCTAssertTrue(visibleLogs.isEmpty, "Collapsing must remove the log viewport")
+            }
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(start), 8)
+    }
+
     func testAutomaticRetryOnlyHandlesTransientConnectionErrors() {
         XCTAssertTrue(HermesClient.isTransientConnectionError(URLError(.notConnectedToInternet)))
         XCTAssertTrue(HermesClient.isTransientConnectionError(URLError(.cannotConnectToHost)))
