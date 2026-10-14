@@ -48,3 +48,10 @@ open -n DerivedData/Build/Products/Debug/HermesMac.app --args --bot-screen-fixtu
 ```
 
 验收证据和真实服务限制见 [验证记录](VALIDATION.md)。
+
+
+### 2026-10-14 生命周期回归
+
+WebKit 消息处理器改用弱代理，正常拆卸仍执行 JavaScript dispose、停止加载及移除处理器。Coordinator 析构也取消超时任务，并对仍被宿主持有的 WebView 安排主线程清理。
+
+`testCoordinatorReleasesWithoutExplicitDismantleWhileWebViewSurvives` 验证不调用显式拆卸时 Coordinator 可以释放；原有真实 WebKit/RFB 测试继续验证消息桥接、画面和输入。尚未进行 Instruments 或真实桌面长期内存曲线测量，详见 [验证记录](VALIDATION.md)。

@@ -5,6 +5,7 @@ import Foundation
     let service: String
     private var credentials: Credentials
     private var credentialsLoaded: Bool
+    private let ownsSession: Bool
     private let session: URLSession
     private var socket: URLSessionWebSocketTask?
     private var reader: Task<Void, Never>?
@@ -27,8 +28,18 @@ import Foundation
         baseURL = url; service = url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         self.credentials = credentials ?? Credentials(); self.credentialsLoaded = credentials != nil
         let config = URLSessionConfiguration.ephemeral; config.timeoutIntervalForRequest = 30
+        ownsSession = session == nil
         self.session = session ?? URLSession(configuration: config)
     }
+    deinit {
+        reader?.cancel()
+        socket?.cancel(with: .goingAway, reason: nil)
+        refreshTask?.cancel()
+        timeouts.values.forEach { $0.cancel() }
+        pending.values.forEach { $0.resume(throwing: CancellationError()) }
+        if ownsSession { session.invalidateAndCancel() }
+    }
+
     func url(_ path: String, query: [URLQueryItem] = []) -> URL {
         var c = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
         c.path = baseURL.path + path; c.queryItems = query.isEmpty ? nil : query
@@ -159,16 +170,23 @@ import Foundation
         let id = "mac-" + UUID().uuidString
         let frame = JSON.object(["jsonrpc": .string("2.0"), "id": .string(id), "method": .string(method), "params": .object(params)])
         let data = try JSONEncoder().encode(frame)
-        return try await withCheckedThrowingContinuation { continuation in
-            pending[id] = continuation
-            timeouts[id] = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(90))
-                guard !Task.isCancelled else { return }
-                self?.finish(id, .failure(ClientError(message: "请求超时，结果未知；不会自动重发")))
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else { continuation.resume(throwing: CancellationError()); return }
+                pending[id] = continuation
+                timeouts[id] = Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(90))
+                    guard !Task.isCancelled else { return }
+                    self?.finish(id, .failure(ClientError(message: "请求超时，结果未知；不会自动重发")))
+                }
+                Task { [weak self] in
+                    do { try await socket.send(.string(String(decoding: data, as: UTF8.self))) }
+                    catch { self?.finish(id, .failure(error)) }
+                }
             }
-            Task { [weak self] in
-                do { try await socket.send(.string(String(decoding: data, as: UTF8.self))) }
-                catch { self?.finish(id, .failure(error)) }
+        } onCancel: { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.finish(id, .failure(CancellationError()))
             }
         }
     }

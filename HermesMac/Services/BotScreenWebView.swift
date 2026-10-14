@@ -52,13 +52,22 @@ struct BotScreenWebView: NSViewRepresentable {
             self.handshakeTimeout = handshakeTimeout
             super.init()
         }
+        deinit {
+            timeoutTask?.cancel()
+            // The renderer can outlive SwiftUI's coordinator (for example in a host view).
+            // Teardown stays on the main actor without capturing the dying coordinator.
+            if let view = webView {
+                Task { @MainActor in Self.disposeWebView(view) }
+            }
+        }
+
         private static let pageURL = URL(string: "hermes-botscreen://viewer/index.html")!
 
         func makeWebView() -> WKWebView {
             let configuration = WKWebViewConfiguration()
             configuration.websiteDataStore = .nonPersistent()
             configuration.setURLSchemeHandler(assets, forURLScheme: "hermes-botscreen")
-            configuration.userContentController.add(self, name: "botScreen")
+            configuration.userContentController.add(WeakBotScreenMessageHandler(delegate: self), name: "botScreen")
             let view = BotScreenNativeWebView(frame: .zero, configuration: configuration)
             view.navigationDelegate = self
             view.setValue(false, forKey: "drawsBackground")
@@ -176,11 +185,14 @@ struct BotScreenWebView: NSViewRepresentable {
             callback = nil
             id = nil
             socketURL = nil
-            webView?.evaluateJavaScript("window.hermesBotScreen?.dispose()", completionHandler: nil)
-            webView?.stopLoading()
-            webView?.configuration.userContentController.removeScriptMessageHandler(forName: "botScreen")
-            webView?.navigationDelegate = nil
+            if let webView { Self.disposeWebView(webView) }
             webView = nil
+        }
+        private static func disposeWebView(_ view: WKWebView) {
+            view.evaluateJavaScript("window.hermesBotScreen?.dispose()", completionHandler: nil)
+            view.stopLoading()
+            view.configuration.userContentController.removeScriptMessageHandler(forName: "botScreen")
+            view.navigationDelegate = nil
         }
     }
 }
@@ -220,4 +232,18 @@ final class BotScreenAssetHandler: NSObject, WKURLSchemeHandler {
         urlSchemeTask.didFinish()
     }
     func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
+}
+
+/// WebKit retains its message handler; forwarding must not retain the coordinator.
+@MainActor private final class WeakBotScreenMessageHandler: NSObject, WKScriptMessageHandler {
+    private weak var delegate: (any WKScriptMessageHandler)?
+
+    init(delegate: any WKScriptMessageHandler) {
+        self.delegate = delegate
+        super.init()
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        delegate?.userContentController(userContentController, didReceive: message)
+    }
 }

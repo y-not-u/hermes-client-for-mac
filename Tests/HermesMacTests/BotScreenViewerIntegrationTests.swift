@@ -23,6 +23,20 @@ import WebKit
         throw ClientError(message: "WebKit integration timed out")
     }
 
+    func testCoordinatorReleasesWithoutExplicitDismantleWhileWebViewSurvives() async throws {
+        _ = NSApplication.shared
+        var coordinator: BotScreenWebView.Coordinator? = BotScreenWebView.Coordinator()
+        weak var weakCoordinator = coordinator
+        let view = try XCTUnwrap(coordinator).makeWebView()
+        coordinator?.configure(id: UUID(), url: URL(string: "ws://127.0.0.1:9/display")!, hasControl: false) { _ in }
+        coordinator = nil
+        XCTAssertNil(weakCoordinator, "WebKit must not retain the coordinator through its message handler")
+        view.stopLoading()
+        // The weak handler must also tolerate messages after its delegate is gone.
+        _ = try? await view.evaluateJavaScript("window.webkit.messageHandlers.botScreen.postMessage({type:'ready'})")
+        view.configuration.userContentController.removeScriptMessageHandler(forName: "botScreen")
+    }
+
     func testBundledWebKitViewerRendersRFBAndGatesKeyboardInput() async throws {
         guard !address.isEmpty else { throw XCTSkip("Run script/test.sh for WebKit/RFB integration") }
         _ = NSApplication.shared

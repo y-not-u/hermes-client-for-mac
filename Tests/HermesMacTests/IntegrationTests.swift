@@ -58,6 +58,76 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         ])])
     }
 
+    func testConnectedClientAndStoreReleaseWithoutExplicitDisconnect() async throws {
+        guard !address.isEmpty else { throw XCTSkip("Run script/test.sh") }
+        _ = try await fixture(["action": .string("reset")])
+        let name = "HermesRelease-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let local = LocalState(defaults: defaults); local.address = address
+        weak var weakClient: HermesClient?
+        var store: AppStore? = AppStore(local: local, makeClient: { address in
+            let client = try HermesClient(address: address, credentials: Credentials(sessionToken: "fixture-token"))
+            weakClient = client
+            return client
+        })
+        weak var weakStore = store
+        await store?.connect()
+        XCTAssertTrue(store?.connected == true)
+        XCTAssertNotNil(weakClient)
+        store = nil
+        try await eventually { weakStore == nil && weakClient == nil }
+    }
+
+    func testCancelledRequestFinishesBeforeServerRespondsAndConnectionRemainsUsable() async throws {
+        let (_, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        _ = try await fixture(["action": .string("configure"), "create_delay": .number(1)])
+        let request = Task { try await client.request("session.create", ["profile": .string("a")]) }
+        // Wait for registration and sending, then cancel while its response is delayed.
+        let deadline = Date().addingTimeInterval(3)
+        var sent = false
+        while !sent, Date() < deadline {
+            let report = try await fixture(["action": .string("inspect")])
+            sent = report["requests"].array.contains { $0["method"].string == "session.create" }
+            if !sent { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        XCTAssertTrue(sent)
+        let cancelledAt = Date()
+        request.cancel()
+        do { _ = try await request.value; XCTFail("Cancelled RPC should throw") }
+        catch is CancellationError {}
+        catch { XCTFail("Unexpected cancellation error: \(error)") }
+        XCTAssertLessThan(Date().timeIntervalSince(cancelledAt), 0.5)
+        // Allow the late response through; it must not resume the continuation twice.
+        try await Task.sleep(for: .milliseconds(1100))
+        _ = try await client.request("client.capabilities")
+        XCTAssertTrue(client.isConnected)
+    }
+
+    func testConversationCacheEvictsLeastRecentAndReloadsHistory() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        var ids: [String] = []
+        for _ in 0..<20 {
+            let snapshot = try await client.request("session.create", ["profile": .string("a")])
+            let id = snapshot["stored_session_id"].string
+            ids.append(id); await store.openSession(id)
+        }
+        await store.openSession(ids[0])
+        let first = try XCTUnwrap(store.current)
+        weak var evicted = store.conversations[ConversationKey(service: store.service, profile: "a", storedID: ids[1])]
+        let extra = try await client.request("session.create", ["profile": .string("a")])["stored_session_id"].string
+        await store.openSession(extra)
+        XCTAssertEqual(store.conversations.count, 20)
+        XCTAssertTrue(store.conversations[first.key] === first)
+        XCTAssertNil(evicted)
+        await store.openSession(ids[1])
+        XCTAssertEqual(store.current?.key.storedID, ids[1])
+        XCTAssertNotNil(store.current?.runtimeID)
+        XCTAssertEqual(store.conversations.count, 20)
+    }
+
     func testModelSwitchRejectsLiteralShellQuotesLikeHermes() async throws {
         let (store, client, defaults, name) = try await prepare()
         defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }

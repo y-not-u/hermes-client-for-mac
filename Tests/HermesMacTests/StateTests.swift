@@ -5,6 +5,46 @@ import AppKit
 @testable import HermesMac
 
 @MainActor final class StateTests: XCTestCase {
+    func testConversationCacheProtectsStateAndRetriesPreviouslyProtectedEntries() throws {
+        let name = "HermesMemory-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = AppStore(local: LocalState(defaults: defaults))
+        store.selectedProfile = "a"
+        let protected = (0..<8).map { index -> Conversation in
+            let c = Conversation(key: ConversationKey(service: store.service, profile: "a", storedID: "protected-\(index)"))
+            store.conversations[c.key] = c
+            return c
+        }
+        store.selectedSession = protected[0].key.storedID
+        protected[1].generating = true
+        protected[2].uncertain = true
+        protected[3].loading = true
+        protected[4].queryingStatus = true
+        protected[5].unread = true
+        protected[6].approvals = [Approval(id: "approval", params: .object([:]))]
+        protected[7].submittingApprovals = ["approval"]
+        for index in 0..<30 {
+            let key = ConversationKey(service: store.service, profile: "a", storedID: "idle-\(index)")
+            store.conversations[key] = Conversation(key: key)
+        }
+        store.pruneConversationCache()
+        XCTAssertEqual(store.conversations.count, 20)
+        for c in protected { XCTAssertTrue(store.conversations[c.key] === c) }
+        // All protected entries may exceed the soft limit without losing state.
+        for c in store.conversations.values { c.generating = true }
+        for index in 0..<5 {
+            let key = ConversationKey(service: store.service, profile: "a", storedID: "active-\(index)")
+            let c = Conversation(key: key); c.generating = true; store.conversations[key] = c
+        }
+        store.pruneConversationCache()
+        XCTAssertEqual(store.conversations.count, 25)
+        for c in store.conversations.values { c.generating = false }
+        store.pruneConversationCache()
+        XCTAssertEqual(store.conversations.count, 20, "Skipped entries must remain eviction candidates")
+        XCTAssertTrue(store.current === protected[0])
+    }
+
     func testReplyNotificationsOnlyForSuccessfulBackgroundCompletion() {
         var active = true
         var replies: [(ConversationKey, String, String)] = []

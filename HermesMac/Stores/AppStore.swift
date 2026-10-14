@@ -42,7 +42,39 @@ import AppKit
     private var listRevision: [String: UUID] = [:]
     private var busyProfiles: Set<String> = []
     private var sessionMutations: Set<ConversationKey> = []
+    @ObservationIgnored private var conversationAccessOrder: [ConversationKey] = []
+    private let maxCachedConversations = 20
     private let historyPageSize = 20
+
+    private func touchConversation(_ key: ConversationKey) {
+        conversationAccessOrder.removeAll { $0 == key }
+        conversationAccessOrder.append(key)
+    }
+
+    // A soft limit: local state that still needs attention must survive eviction.
+    func pruneConversationCache() {
+        conversationAccessOrder.removeAll { conversations[$0] == nil }
+        for key in conversations.keys where !conversationAccessOrder.contains(key) {
+            conversationAccessOrder.insert(key, at: 0)
+        }
+        for key in conversationAccessOrder {
+            guard conversations.count > maxCachedConversations else { break }
+            guard let c = conversations[key], key != currentKey,
+                  !c.generating, !c.uncertain, !c.loading, !c.queryingStatus, !c.unread,
+                  c.recoverableMessageID == nil, c.approvals.isEmpty, c.submittingApprovals.isEmpty,
+                  !busyProfiles.contains(key.profile), !modelSwitching.contains(key.profile),
+                  !sessionMutations.contains(key), modelConfirmation?.key != key,
+                  !modelLoading.contains(ModelPickerContext(service: key.service, profile: key.profile, sessionID: key.storedID)) else { continue }
+            conversations.removeValue(forKey: key)
+            let runtimeIDs = routes.filter { $0.value == key }.map(\.key)
+            for id in runtimeIDs { routes.removeValue(forKey: id); earlyFrames.removeValue(forKey: id) }
+            let context = ModelPickerContext(service: key.service, profile: key.profile, sessionID: key.storedID)
+            modelCatalogs.removeValue(forKey: context)
+            modelErrors.removeValue(forKey: context)
+            modelRevisions.removeValue(forKey: context)
+        }
+        conversationAccessOrder.removeAll { conversations[$0] == nil }
+    }
     init(local: LocalState? = nil, makeClient: ((String) throws -> HermesClient)? = nil,
          isAppActive: @escaping @MainActor () -> Bool = { NSApp?.isActive ?? true },
          onReplyCompleted: @escaping @MainActor (ConversationKey, String, String) -> Void = { _, _, _ in }) {
@@ -83,7 +115,7 @@ import AppKit
         guard connected, !selectedProfile.isEmpty, let client else { return }
         let context = modelContext; let epoch = generation; let revision = UUID()
         modelRevisions[context] = revision; modelLoading.insert(context); modelErrors[context] = nil
-        defer { if epoch == generation, modelRevisions[context] == revision { modelLoading.remove(context) } }
+        defer { if epoch == generation, modelRevisions[context] == revision { modelLoading.remove(context); pruneConversationCache() } }
         var params: [String: JSON] = ["profile": .string(context.profile)]
         if let runtime = current?.runtimeID { params["session_id"] = .string(runtime) }
         if refresh { params["refresh"] = .bool(true) }
@@ -108,7 +140,7 @@ import AppKit
         let profile = selectedProfile; let epoch = generation; let origin = navigation
         let startingContext = modelContext
         modelSwitching.insert(profile)
-        defer { if epoch == generation { modelSwitching.remove(profile) } }
+        defer { if epoch == generation { modelSwitching.remove(profile); pruneConversationCache() } }
         do {
             let c: Conversation
             if let current { c = current }
@@ -118,7 +150,7 @@ import AppKit
                 let id = snapshot["stored_session_id"].string
                 guard !id.isEmpty else { throw ClientError(message: "服务未返回持久会话 ID，请升级 Hermes") }
                 let key = ConversationKey(service: service, profile: profile, storedID: id)
-                c = Conversation(key: key); c.snapshot(snapshot); conversations[key] = c; bind(c)
+                c = Conversation(key: key); c.snapshot(snapshot); conversations[key] = c; touchConversation(key); bind(c)
                 sessions[profile, default: []].insert(SessionSummary(id: id, title: "新会话"), at: 0)
                 // Keep the user's draft while moving it into the newly created session.
                 if navigation == origin {
@@ -187,7 +219,7 @@ import AppKit
             client?.disconnect(); client = next; connected = false; connecting = true; connection = "连接中…"; error = nil
             modelCatalogs = [:]; modelErrors = [:]; modelLoading = []; modelSwitching = []; modelRevisions = [:]; modelConfirmation = nil
             busyProfiles = []; routes = [:]; earlyFrames = [:]; buffered = []; flushTask?.cancel(); flushTask = nil
-            if changed { conversations = [:]; sessions = [:]; profiles = []; busyProfiles = []; selectedProfile = ""; selectedSession = nil; draft = ""; search = "" }
+            if changed { conversationAccessOrder = []; conversations = [:]; sessions = [:]; profiles = []; busyProfiles = []; selectedProfile = ""; selectedSession = nil; draft = ""; search = "" }
             address = next.service; local.address = address
             installCallbacks(next, epoch: epoch)
             try await next.connect(); guard epoch == generation else { return }
@@ -209,6 +241,7 @@ import AppKit
         connected = true; connecting = false; connection = "已连接"; error = nil
         for conversation in Array(conversations.values) where profiles.contains(where: { $0.name == conversation.key.profile }) {
             guard epoch == generation, !Task.isCancelled else { return }
+            guard conversations[conversation.key] === conversation else { continue }
             await resume(conversation, client: client, epoch: epoch)
         }
         let saved = local.state(service)
@@ -265,11 +298,12 @@ import AppKit
                     try? await Task.sleep(for: .milliseconds(40)); guard let self, !Task.isCancelled else { return }
                     let frames = self.buffered; self.buffered = []; self.flushTask = nil
                     for frame in frames { self.route(frame) }
+                    self.pruneConversationCache()
                 }
             }
         }
-        client.onDisconnect = { [weak self] error in
-            guard let self, self.generation == epoch else { return }
+        client.onDisconnect = { [weak self, weak client] error in
+            guard let self, let client, self.generation == epoch else { return }
             // Flush received frames before declaring the stream uncertain.
             self.flushTask?.cancel(); self.flushTask = nil
             let frames = self.buffered; self.buffered = []; frames.forEach { self.route($0) }
@@ -301,7 +335,7 @@ import AppKit
         profiles.swapAt(i, i + delta); local.update(service) { $0.profileOrder = profiles.map(\.name) }
     }
     private func restoreDraft() { draft = local.state(service).drafts[LocalState.draftKey(profile: selectedProfile, session: selectedSession)] ?? "" }
-    func newSession() { modelConfirmation = nil; navigation = UUID(); selectedSession = nil; local.update(service) { $0.lastSession.removeValue(forKey: selectedProfile) }; restoreDraft() }
+    func newSession() { defer { pruneConversationCache() }; modelConfirmation = nil; navigation = UUID(); selectedSession = nil; local.update(service) { $0.lastSession.removeValue(forKey: selectedProfile) }; restoreDraft() }
     func searchChanged() {
         searchTask?.cancel(); let profile = selectedProfile; let query = search
         searchTask = Task { [weak self] in
@@ -335,6 +369,8 @@ import AppKit
         guard !sessionMutations.contains(ConversationKey(service: service, profile: owner, storedID: id)) else { return }
         navigation = UUID(); selectedSession = id; restoreDraft(); local.update(service) { $0.lastSession[owner] = id }
         let key = ConversationKey(service: service, profile: owner, storedID: id)
+        touchConversation(key)
+        defer { pruneConversationCache() }
         if let c = conversations[key] { c.unread = false; if c.runtimeID != nil || c.loading { return } }
         let c = conversations[key] ?? Conversation(key: key); conversations[key] = c
         await resume(c, client: client, epoch: generation)
@@ -342,7 +378,7 @@ import AppKit
     private func resume(_ c: Conversation, client: HermesClient, epoch: UUID) async {
         guard !(c.loading && c.loadingEpoch == epoch), c.readOnlyReason != "此 profile 已被删除" else { return }
         c.loading = true; c.loadingEpoch = epoch
-        defer { if c.loadingEpoch == epoch { c.loading = false; c.loadingEpoch = nil } }
+        defer { if c.loadingEpoch == epoch { c.loading = false; c.loadingEpoch = nil; pruneConversationCache() } }
         // Fetch a bounded display page over HTTP, never the full model/tool history
         // over WebSocket. Read it before resume so the newer inflight snapshot wins.
         var history: [Message]?
@@ -404,7 +440,7 @@ import AppKit
             let page = Array(c.historyBacklog.suffix(100)); c.historyBacklog.removeLast(page.count)
             c.messages.insert(contentsOf: page, at: 0); c.hasOlder = !c.historyBacklog.isEmpty; return
         }
-        c.loading = true; defer { c.loading = false }; let epoch = generation
+        c.loading = true; defer { c.loading = false; pruneConversationCache() }; let epoch = generation
         do {
             let result = try await historyPage(c, client: client, offset: c.historyOffset)
             guard epoch == generation else { return }
@@ -417,7 +453,7 @@ import AppKit
         guard let c = current, let client, connected, !c.loading, !c.queryingStatus else { return }
         let epoch = generation
         c.queryingStatus = true; c.statusQueryResult = nil
-        defer { c.queryingStatus = false }
+        defer { c.queryingStatus = false; pruneConversationCache() }
         c.readOnlyReason = nil
         await resume(c, client: client, epoch: epoch)
         guard epoch == generation else { return }
@@ -451,7 +487,7 @@ import AppKit
             return
         }
         let profile = selectedProfile; let text = draft; let epoch = generation; let startingSession = selectedSession; let originNavigation = navigation
-        busyProfiles.insert(profile); defer { if epoch == generation { busyProfiles.remove(profile) } }
+        busyProfiles.insert(profile); defer { if epoch == generation { busyProfiles.remove(profile); pruneConversationCache() } }
         do {
             var c: Conversation
             if let current { c = current }
@@ -461,7 +497,7 @@ import AppKit
                 let id = snapshot["stored_session_id"].string
                 guard !id.isEmpty else { throw ClientError(message: "服务未返回持久会话 ID，请升级 Hermes") }
                 let key = ConversationKey(service: service, profile: profile, storedID: id)
-                c = Conversation(key: key); c.snapshot(snapshot); conversations[key] = c; bind(c)
+                c = Conversation(key: key); c.snapshot(snapshot); conversations[key] = c; touchConversation(key); bind(c)
                 sessions[profile, default: []].insert(SessionSummary(id: id, title: String(text.prefix(40))), at: 0)
                 local.update(service) { $0.lastSession[profile] = id }
                 let draftKey = LocalState.draftKey(profile: profile, session: startingSession)
@@ -486,14 +522,14 @@ import AppKit
     }
     private func flushFrames() {
         flushTask?.cancel(); flushTask = nil
-        let frames = buffered; buffered = []; frames.forEach { route($0) }
+        let frames = buffered; buffered = []; frames.forEach { route($0) }; pruneConversationCache()
     }
     private func sendFollowUp(_ c: Conversation, client: HermesClient, queue: Bool) async {
         guard let runtime = c.runtimeID else { return }
         let text = draft; let epoch = generation; let origin = navigation
         let profile = c.key.profile
         busyProfiles.insert(profile)
-        defer { if epoch == generation { busyProfiles.remove(profile) } }
+        defer { if epoch == generation { busyProfiles.remove(profile); pruneConversationCache() } }
         let messageID = c.appendFollowUp(text, splitReply: !queue)
         draft = ""
         let params: [String: JSON] = ["session_id": .string(runtime), "profile": .string(profile), "text": .string(text)]
@@ -565,7 +601,7 @@ import AppKit
         let epoch = generation
         c.submittingApprovals.insert(approval.id)
         c.approvalErrors.removeValue(forKey: approval.id)
-        defer { c.submittingApprovals.remove(approval.id) }
+        defer { c.submittingApprovals.remove(approval.id); pruneConversationCache() }
         do {
             let requestID = approval.params["request_id"].string
             if !requestID.isEmpty, let runtime = c.runtimeID {
@@ -607,7 +643,7 @@ import AppKit
         let epoch = generation
         let key = ConversationKey(service: expectedService, profile: profile, storedID: row.id)
         sessionMutations.insert(key)
-        defer { sessionMutations.remove(key) }
+        defer { sessionMutations.remove(key); pruneConversationCache() }
         do {
             if archive {
                 _ = try await client.rest("/api/sessions/\(row.id)", method: "PATCH",

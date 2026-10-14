@@ -161,18 +161,46 @@ public struct CleanScrollBarsModifier: ViewModifier {
 private struct ScrollViewConfigurator: NSViewRepresentable {
     let preferOverlay: Bool
 
+    @MainActor final class Coordinator {
+        private var pending: (() -> Void)?
+        private var scheduled = false
+        private var disposed = false
+
+        func schedule(_ action: @escaping () -> Void) {
+            guard !disposed else { return }
+            pending = action
+            guard !scheduled else { return }
+            scheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.disposed else { return }
+                self.scheduled = false
+                let action = self.pending
+                self.pending = nil
+                action?()
+            }
+        }
+
+        func dispose() { disposed = true; pending = nil }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        DispatchQueue.main.async {
-            configure(from: view)
+        context.coordinator.schedule { [weak view] in
+            if let view { configure(from: view) }
         }
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            configure(from: nsView)
+        context.coordinator.schedule { [weak nsView] in
+            if let nsView { configure(from: nsView) }
         }
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.dispose()
     }
 
     private func configure(from view: NSView) {
