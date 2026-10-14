@@ -24,6 +24,8 @@
 
 ## WebSocket JSON-RPC
 
+聊天、模型与能力协商 RPC 输入集中在 `HermesRPCRequest`，通过 `HermesClient.execute` 执行；返回值保留开放 JSON，继续由领域解析器校验，以容忍新增字段并保留接收序号。模型目录加载状态和迟到响应保护由可注入执行协议的 `ModelCatalogStore` 管理。
+
 共享 `/api/ws` 连接。loopback 使用 `?token=…`；官方认证模式使用 `?ticket=…`。连接后首先调用 `client.capabilities`，声明 `server_requests=true`。请求按 JSON-RPC ID 匹配 continuation，90 秒超时；socket 断开会让所有等待请求失败，不自动重发。
 
 | 方法 | 参数与行为 |

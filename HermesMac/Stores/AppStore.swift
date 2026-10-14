@@ -19,12 +19,12 @@ import AppKit
     var listLoading = false
     var listHasMore: [String: Bool] = [:]
     var draft = "" { didSet { persistDraft() } }
-    var modelCatalogs: [ModelPickerContext: ModelCatalog] = [:]
-    var modelErrors: [ModelPickerContext: String] = [:]
-    var modelLoading: Set<ModelPickerContext> = []
+    let models = ModelCatalogStore()
+    var modelCatalogs: [ModelPickerContext: ModelCatalog] { models.catalogs }
+    var modelErrors: [ModelPickerContext: String] { models.errors }
+    var modelLoading: Set<ModelPickerContext> { models.loading }
     var modelSwitching: Set<String> = []
     var modelConfirmation: ModelSwitchConfirmation?
-    private var modelRevisions: [ModelPickerContext: UUID] = [:]
     private var client: HermesClient?
     @ObservationIgnored private let imageCache = RemoteImageCache()
     @ObservationIgnored private let makeClient: (String) throws -> HermesClient
@@ -69,9 +69,7 @@ import AppKit
             let runtimeIDs = routes.filter { $0.value == key }.map(\.key)
             for id in runtimeIDs { routes.removeValue(forKey: id); earlyFrames.removeValue(forKey: id) }
             let context = ModelPickerContext(service: key.service, profile: key.profile, sessionID: key.storedID)
-            modelCatalogs.removeValue(forKey: context)
-            modelErrors.removeValue(forKey: context)
-            modelRevisions.removeValue(forKey: context)
+            models.remove(context)
         }
         conversationAccessOrder.removeAll { conversations[$0] == nil }
     }
@@ -113,20 +111,9 @@ import AppKit
     }
     func loadModels(refresh: Bool = false) async {
         guard connected, !selectedProfile.isEmpty, let client else { return }
-        let context = modelContext; let epoch = generation; let revision = UUID()
-        modelRevisions[context] = revision; modelLoading.insert(context); modelErrors[context] = nil
-        defer { if epoch == generation, modelRevisions[context] == revision { modelLoading.remove(context); pruneConversationCache() } }
-        var params: [String: JSON] = ["profile": .string(context.profile)]
-        if let runtime = current?.runtimeID { params["session_id"] = .string(runtime) }
-        if refresh { params["refresh"] = .bool(true) }
-        do {
-            let json = try await client.request("model.options", params)
-            guard epoch == generation, modelRevisions[context] == revision else { return }
-            modelCatalogs[context] = try ModelCatalog(json)
-        } catch {
-            guard epoch == generation, modelRevisions[context] == revision else { return }
-            modelErrors[context] = error.localizedDescription
-        }
+        let epoch = generation
+        await models.load(modelContext, runtimeID: current?.runtimeID, refresh: refresh, using: client)
+        if epoch == generation { pruneConversationCache() }
     }
     func switchModel(_ choice: ModelChoice, confirmation: ModelSwitchConfirmation? = nil) async {
         guard canSwitchModel, let client else { return }
@@ -145,7 +132,7 @@ import AppKit
             let c: Conversation
             if let current { c = current }
             else {
-                let snapshot = try await client.request("session.create", ["profile": .string(profile), "source": .string("dashboard"), "close_on_disconnect": .bool(false)])
+                let snapshot = try await client.execute(.createSession(profile: profile))
                 guard epoch == generation else { return }
                 let id = snapshot["stored_session_id"].string
                 guard !id.isEmpty else { throw ClientError(message: "服务未返回持久会话 ID，请升级 Hermes") }
@@ -160,15 +147,13 @@ import AppKit
                         $0.drafts.removeValue(forKey: LocalState.draftKey(profile: profile, session: nil))
                     }
                     selectedSession = id
-                    modelCatalogs[modelContext] = modelCatalogs[startingContext]
+                    models.copyCatalog(from: startingContext, to: modelContext)
                 }
             }
             guard epoch == generation, navigation == origin, currentKey == c.key else { return }
             guard let runtime = c.runtimeID, !runtime.isEmpty else { throw ClientError(message: "会话未恢复，请重连后再切换模型") }
-            var params: [String: JSON] = ["profile": .string(profile), "session_id": .string(runtime),
-                                         "key": .string("model"), "value": .string(choice.switchValue)]
-            if confirmation != nil { params["confirm_expensive_model"] = .bool(true) }
-            let result = try await client.request("config.set", params)
+            let result = try await client.execute(.setModel(profile: profile, runtimeID: runtime,
+                                                           choice: choice, confirmed: confirmation != nil))
             guard epoch == generation else { return }
             if result["confirm_required"].bool {
                 if currentKey == c.key {
@@ -182,15 +167,12 @@ import AppKit
             }
             let context = ModelPickerContext(service: c.key.service, profile: profile, sessionID: c.key.storedID)
             // Invalidate reads started before the mutation's response.
-            modelRevisions[context] = UUID(); modelLoading.remove(context)
-            modelCatalogs[context]?.model = result["value"].string
-            modelCatalogs[context]?.provider = choice.provider
-            modelErrors[context] = nil
+            models.didSwitch(context, model: result["value"].string, provider: choice.provider)
             if currentKey == c.key { await loadModels() }
         } catch {
             guard epoch == generation else { return }
-            modelErrors[ModelPickerContext(service: startingContext.service, profile: profile,
-                                           sessionID: selectedProfile == profile && navigation == origin ? selectedSession : startingContext.sessionID)] = error.localizedDescription
+            models.setError(error.localizedDescription, for: ModelPickerContext(service: startingContext.service, profile: profile,
+                sessionID: selectedProfile == profile && navigation == origin ? selectedSession : startingContext.sessionID))
         }
     }
     func profileBusy(_ profile: String) -> Bool { busyProfiles.contains(profile) || conversations.values.contains { $0.key.profile == profile && ($0.generating || $0.uncertain) } }
@@ -199,7 +181,7 @@ import AppKit
     private func persistDraft() {
         guard !selectedProfile.isEmpty else { return }
         let key = LocalState.draftKey(profile: selectedProfile, session: selectedSession)
-        local.update(service) { $0.drafts[key] = draft }
+        local.setDraft(draft, for: key, service: service)
     }
     func connect(address newAddress: String? = nil, token: String? = nil) async {
         reconnectTask?.cancel(); reconnectTask = nil
@@ -217,7 +199,7 @@ import AppKit
             let epoch = attempt
             botScreen.disconnected()
             client?.disconnect(); client = next; connected = false; connecting = true; connection = "连接中…"; error = nil
-            modelCatalogs = [:]; modelErrors = [:]; modelLoading = []; modelSwitching = []; modelRevisions = [:]; modelConfirmation = nil
+            models.reset(); modelSwitching = []; modelConfirmation = nil
             busyProfiles = []; routes = [:]; earlyFrames = [:]; buffered = []; flushTask?.cancel(); flushTask = nil
             if changed { conversationAccessOrder = []; conversations = [:]; sessions = [:]; profiles = []; busyProfiles = []; selectedProfile = ""; selectedSession = nil; draft = ""; search = "" }
             address = next.service; local.address = address
@@ -409,7 +391,7 @@ import AppKit
             historyError = "历史消息加载失败：\(error.localizedDescription)"
         }
         do {
-            let snapshot = try await client.request("session.resume", ["profile": .string(c.key.profile), "session_id": .string(c.key.storedID), "omit_messages": .bool(true)])
+            let snapshot = try await client.execute(.resumeSession(profile: c.key.profile, sessionID: c.key.storedID))
             guard epoch == generation else { return }
             c.snapshot(snapshot, history: history)
             if let historyError, c.error == nil { c.error = historyError }
@@ -492,7 +474,7 @@ import AppKit
             var c: Conversation
             if let current { c = current }
             else {
-                let snapshot = try await client.request("session.create", ["profile": .string(profile), "source": .string("dashboard"), "close_on_disconnect": .bool(false)])
+                let snapshot = try await client.execute(.createSession(profile: profile))
                 guard epoch == generation else { return }
                 let id = snapshot["stored_session_id"].string
                 guard !id.isEmpty else { throw ClientError(message: "服务未返回持久会话 ID，请升级 Hermes") }
@@ -516,7 +498,7 @@ import AppKit
             if navigation == originNavigation && selectedProfile == profile && selectedSession == c.key.storedID {
                 if draft == text { draft = "" } else { persistDraft() }
             }
-            do { _ = try await client.request("prompt.submit", ["session_id": .string(runtime), "profile": .string(profile), "text": .string(text)]) }
+            do { _ = try await client.execute(.submitPrompt(profile: profile, runtimeID: runtime, text: text)) }
             catch { guard epoch == generation else { return }; c.uncertain = true; c.error = "发送结果未知：\(error.localizedDescription)。请重新查询状态，不会自动重发。" }
         } catch { guard epoch == generation else { return }; self.error = error.localizedDescription }
     }
@@ -532,20 +514,19 @@ import AppKit
         defer { if epoch == generation { busyProfiles.remove(profile); pruneConversationCache() } }
         let messageID = c.appendFollowUp(text, splitReply: !queue)
         draft = ""
-        let params: [String: JSON] = ["session_id": .string(runtime), "profile": .string(profile), "text": .string(text)]
         do {
             var status = ""
             var preserveReply = queue
             if !queue {
-                for method in ["session.redirect", "session.steer"] {
+                for method in [HermesRPCRequest.FollowUpMethod.redirect, .steer] {
                     do {
-                        let result = try await client.request(method, params)
+                        let result = try await client.execute(.followUp(method, profile: profile, runtimeID: runtime, text: text))
                         guard epoch == generation else { return }
                         flushFrames()
                         let response = result["status"].string
                         if response == "redirected" || response == "queued" {
-                            preserveReply = method == "session.redirect" && response == "queued"
-                            status = method == "session.steer" ? "已提交引导，等待执行边界" : (response == "queued" ? "已排队，等待下一轮" : "已提交改向")
+                            preserveReply = method == .redirect && response == "queued"
+                            status = method == .steer ? "已提交引导，等待执行边界" : (response == "queued" ? "已排队，等待下一轮" : "已提交改向")
                             break
                         }
                         guard response == "rejected" else { throw ClientError(message: "服务返回了未知提交状态") }
@@ -556,8 +537,7 @@ import AppKit
             }
             guard epoch == generation else { return }
             if status.isEmpty {
-                var queuedParams = params; queuedParams["queued"] = .bool(true)
-                let result = try await client.request("prompt.submit", queuedParams)
+                let result = try await client.execute(.submitPrompt(profile: profile, runtimeID: runtime, text: text, queued: true))
                 guard epoch == generation else { return }
                 flushFrames()
                 switch result["status"].string {
@@ -590,7 +570,7 @@ import AppKit
     }
     func interrupt(conversation: Conversation? = nil) async {
         guard let c = conversation ?? current, let runtime = c.runtimeID, let client, c.key.service == client.service, conversations[c.key] === c else { return }
-        do { _ = try await client.request("session.interrupt", ["session_id": .string(runtime), "profile": .string(c.key.profile)]) }
+        do { _ = try await client.execute(.interrupt(profile: c.key.profile, runtimeID: runtime)) }
         catch { c.error = error.localizedDescription }
     }
     func approve(_ approval: Approval, conversation c: Conversation, choice: String) async {
@@ -605,9 +585,7 @@ import AppKit
         do {
             let requestID = approval.params["request_id"].string
             if !requestID.isEmpty, let runtime = c.runtimeID {
-                let result = try await client.request("approval.respond", [
-                    "session_id": .string(runtime), "request_id": .string(requestID), "choice": .string(choice)
-                ])
+                let result = try await client.execute(.approve(runtimeID: runtime, requestID: requestID, choice: choice))
                 guard epoch == generation else { return }
                 guard result["resolved"].number > 0 || result["resolved"] == .bool(true) else {
                     throw ClientError(message: "服务端未确认此审批，请查询会话状态后重试")

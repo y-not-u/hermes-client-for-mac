@@ -9,7 +9,6 @@ import OSLog
         ReplyNotifications.shared.replyCompleted(profile: profile, text: text)
     })
     init() {
-        NSScroller.enableCleanTrackBackground()
         #if DEBUG
         // Isolated UI acceptance: no real preferences or Keychain entries are read or changed.
         let arguments = ProcessInfo.processInfo.arguments
@@ -123,11 +122,6 @@ import OSLog
         NSApp.reply(toApplicationShouldTerminate: true)
     }
 
-    override init() {
-        super.init()
-        NSScroller.enableCleanTrackBackground()
-    }
-
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
            let icon = NSImage(contentsOf: url) {
@@ -136,7 +130,6 @@ import OSLog
         ReplyNotifications.shared.start()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        NSScroller.enableCleanTrackBackground()
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }

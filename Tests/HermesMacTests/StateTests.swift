@@ -364,9 +364,6 @@ import AppKit
     }
 
     func testCleanScrollerOptimizationAndTransparentScroller() {
-        // Test global track clean background enablement
-        NSScroller.enableCleanTrackBackground()
-
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
         scroll.hasVerticalScroller = true
         let overlayScroller = TransparentOverlayScroller(frame: NSRect(x: 0, y: 0, width: 14, height: 100))
@@ -404,6 +401,7 @@ import AppKit
         let hosting = NSHostingView(rootView: view)
         hosting.frame = NSRect(x: 0, y: 0, width: 200, height: 200)
         hosting.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
 
         var found: NSScrollView?
         func traverse(_ v: NSView) {
@@ -412,12 +410,24 @@ import AppKit
         }
         traverse(hosting)
         XCTAssertNotNil(found)
+        XCTAssertEqual(found?.drawsBackground, false)
+        XCTAssertEqual(found?.contentView.drawsBackground, false)
+        XCTAssertEqual(found?.scrollerStyle, .overlay)
     }
 
-    func testCleanScrollerAndTransparentScrollView() {
-        NSScroller.enableCleanTrackBackground()
-
+    func testCleanScrollStyleOnlyChangesTheSelectedScrollView() {
+        let unrelated = NSScrollView()
+        unrelated.drawsBackground = true; unrelated.backgroundColor = .red
+        unrelated.contentView.drawsBackground = true; unrelated.contentView.backgroundColor = .blue
+        unrelated.scrollerStyle = .legacy
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
+        CleanScrollViewStyle.configure(scroll)
+        XCTAssertTrue(unrelated.drawsBackground)
+        XCTAssertEqual(unrelated.backgroundColor, .blue)
+        XCTAssertTrue(unrelated.contentView.drawsBackground)
+        XCTAssertEqual(unrelated.contentView.backgroundColor, .blue)
+        XCTAssertEqual(unrelated.scrollerStyle, .legacy)
+        XCTAssertEqual(scroll.scrollerStyle, .overlay)
         XCTAssertFalse(scroll.drawsBackground)
         XCTAssertEqual(scroll.backgroundColor, .clear)
         XCTAssertFalse(scroll.contentView.drawsBackground)

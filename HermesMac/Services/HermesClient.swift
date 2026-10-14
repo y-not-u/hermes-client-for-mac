@@ -1,6 +1,6 @@
 import Foundation
 
-@MainActor final class HermesClient {
+@MainActor final class HermesClient: HermesRPCExecuting {
     let baseURL: URL
     let service: String
     private var credentials: Credentials
@@ -156,7 +156,7 @@ import Foundation
                 self.disconnect(); self.onDisconnect?(error)
             }
         }
-        do { _ = try await request("client.capabilities", ["server_requests": .bool(true)]) }
+        do { _ = try await execute(.capabilities) }
         catch { disconnect(); throw ClientError(message: "WebSocket/协议连接失败：\(error.localizedDescription)。请核对 Hermes revision 与认证配置", retryable: Self.isTransientConnectionError(error)) }
     }
     func disconnect() {
@@ -165,6 +165,10 @@ import Foundation
         timeouts.values.forEach { $0.cancel() }; timeouts.removeAll()
         calls.values.forEach { $0.resume(throwing: ClientError(message: "连接中断；发送结果可能未知，请查询历史后再决定是否重发")) }
     }
+    func execute(_ request: HermesRPCRequest) async throws -> JSON {
+        try await self.request(request.method, request.params)
+    }
+
     func request(_ method: String, _ params: [String: JSON] = [:]) async throws -> JSON {
         guard let socket else { throw ClientError(message: "服务未连接") }
         let id = "mac-" + UUID().uuidString
