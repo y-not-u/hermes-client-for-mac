@@ -27,10 +27,9 @@ final class BotScreenViewerSecurityTests: XCTestCase {
             if case .failed(let failedID, _) = event { failedIDs.append(failedID) }
         }
         coordinator.configure(id: id, url: url, hasControl: false, onEvent: callback)
-        try await Task.sleep(for: .milliseconds(100))
-        XCTAssertEqual(failedIDs, [id])
+        try await waitUntil { failedIDs == [id] }
         coordinator.configure(id: id, url: url, hasControl: true, onEvent: callback)
-        try await Task.sleep(for: .milliseconds(100))
+        try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(failedIDs, [id])
         coordinator.dispose()
     }
@@ -45,12 +44,19 @@ final class BotScreenViewerSecurityTests: XCTestCase {
         }
         coordinator.configure(id: oldID, url: url, hasControl: false, onEvent: callback)
         coordinator.configure(id: newID, url: url, hasControl: false, onEvent: callback)
-        try await Task.sleep(for: .milliseconds(150))
-        XCTAssertEqual(failedIDs, [newID])
+        try await waitUntil { failedIDs == [newID] }
         coordinator.configure(id: UUID(), url: url, hasControl: false, onEvent: callback)
         coordinator.dispose()
-        try await Task.sleep(for: .milliseconds(150))
+        try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(failedIDs, [newID])
+    }
+
+    @MainActor private func waitUntil(timeout: Duration = .seconds(2), _ predicate: () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !predicate() {
+            if ContinuousClock.now >= deadline { XCTFail("Timed out waiting for viewer event"); return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
     }
 
     func testAssetHandlerOnlyServesBundledViewerOrigin() {

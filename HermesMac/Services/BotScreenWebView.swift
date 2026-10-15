@@ -111,12 +111,17 @@ struct BotScreenWebView: NSViewRepresentable {
         private func startTimeout(id: UUID) {
             let generation = attemptGeneration
             let duration = handshakeTimeout
+            // Sleep off the main actor so a busy UI/test runner cannot postpone the deadline itself.
             timeoutTask = Task { [weak self] in
-                do { try await Task.sleep(for: duration) } catch { return }
-                guard let self, !self.disposed, !self.attemptEnded,
+                let expired = await Self.sleep(for: duration)
+                guard expired, let self, !self.disposed, !self.attemptEnded,
                       self.id == id, self.attemptGeneration == generation else { return }
                 self.failAttempt(id, message: "桌面连接超时，请重新连接")
             }
+        }
+        private nonisolated static func sleep(for duration: Duration) async -> Bool {
+            do { try await Task.sleep(for: duration) } catch { return false }
+            return !Task.isCancelled
         }
         private func cancelTimeout() { timeoutTask?.cancel(); timeoutTask = nil }
         private func failAttempt(_ id: UUID, message: String) {
