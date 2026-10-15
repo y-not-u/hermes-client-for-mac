@@ -4,15 +4,18 @@ import AppKit
 struct MarkdownView: View {
     let text: String
     var media: MediaPresentation? = nil
+    @State private var parsed = MarkdownSegmentCache()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(Array(MediaDirective.segments(text, renderMedia: media != nil).enumerated()), id: \.offset) { _, segment in
+            ForEach(Array(parsed.segments(for: text, renderMedia: media != nil).enumerated()), id: \.offset) { _, segment in
                 switch segment {
                 case .code(let code, let language):
                     CodeBlockView(code: code, language: language)
+                        .equatable()
                 case .text(let text):
                     MarkdownTextBlock(text: text)
+                        .equatable()
                         .textSelection(.enabled)
                 case .image(let path):
                     if let media {
@@ -35,10 +38,14 @@ struct MediaPresentation {
 
 // MARK: - Modern Developer Code Block
 
-private struct CodeBlockView: View {
+private struct CodeBlockView: View, Equatable {
     @AppStorage(ChatTypography.key) private var fontSize = ChatTypography.defaultSize
     let code: String
     let language: String
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.code == rhs.code && lhs.language == rhs.language
+    }
 
     var displayLanguage: String {
         let trimmed = language.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -188,9 +195,11 @@ struct CodeContentView: NSViewRepresentable {
 
 // MARK: - Markdown Text Block
 
-private struct MarkdownTextBlock: View {
+private struct MarkdownTextBlock: View, Equatable {
     @AppStorage(ChatTypography.key) private var fontSize = ChatTypography.defaultSize
     let text: String
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.text == rhs.text }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -198,15 +207,24 @@ private struct MarkdownTextBlock: View {
                 switch block {
                 case .table(let table):
                     MarkdownTableView(table: table, fontSize: ChatTypography.scaled(13.5, for: fontSize))
+                        .equatable()
                 case .line(let line):
-                    lineView(line)
+                    MarkdownLineView(line: line, fontSize: fontSize)
+                        .equatable()
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder private func lineView(_ line: String) -> some View {
+}
+
+// A streamed suffix changes only its line; completed lines keep their attributed text.
+private struct MarkdownLineView: View, Equatable {
+    let line: String
+    let fontSize: Double
+
+    @ViewBuilder var body: some View {
         if line.hasPrefix("### ") {
             inline(String(line.dropFirst(4)))
                 .font(.system(size: ChatTypography.scaled(14, for: fontSize), weight: .bold))

@@ -12,6 +12,9 @@ struct RemoteImageFile: Sendable {
 
 enum RemoteImageDecoder {
     static let maxBytes = 16 * 1024 * 1024
+    // Chat previews are at most 536 pt wide / 340 pt high. Keep enough pixels for 2x
+    // displays; the preview sheet and exports still read the untouched original.
+    static let thumbnailPixelSize = 1080
     static func dataURL(_ value: String) throws -> Data {
         guard let comma = value.firstIndex(of: ","),
               value[..<comma].lowercased().hasPrefix("data:image/"),
@@ -30,15 +33,29 @@ enum RemoteImageDecoder {
 
     static func file(_ data: Data, url: URL) throws -> RemoteImageFile {
         guard data.count <= maxBytes,
-              let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else {
+            throw ClientError(message: "无法解码图片，或图片尺寸过大")
+        }
+        return try file(source, url: url)
+    }
+
+    static func cachedFile(at url: URL) throws -> RemoteImageFile {
+        guard let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= maxBytes,
+              let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
+            throw ClientError(message: "无法读取图片缓存")
+        }
+        return try file(source, url: url)
+    }
+
+    private static func file(_ source: CGImageSource, url: URL) throws -> RemoteImageFile {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int,
               width > 0, height > 0, Double(width) * Double(height) <= 40_000_000,
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: 1600
+                kCGImageSourceThumbnailMaxPixelSize: thumbnailPixelSize
               ] as CFDictionary) else {
             throw ClientError(message: "无法解码图片，或图片尺寸过大")
         }
@@ -56,11 +73,15 @@ enum RemoteImageDecoder {
 actor RemoteImageCache {
     private let directory: URL
     private let maxDiskBytes: Int
+    private let maxConcurrentLoads: Int
+    private var activeLoads = 0
+    private var loadWaiters: [CheckedContinuation<Void, Never>] = []
     private var pending: [String: Task<RemoteImageFile, Error>] = [:]
-    init(directory: URL? = nil, maxDiskBytes: Int = 200 * 1024 * 1024) {
+    init(directory: URL? = nil, maxDiskBytes: Int = 200 * 1024 * 1024, maxConcurrentLoads: Int = 2) {
         self.directory = directory ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("com.hermes.mac/Media", isDirectory: true)
         self.maxDiskBytes = maxDiskBytes
+        self.maxConcurrentLoads = max(1, maxConcurrentLoads)
     }
     func image(for request: RemoteImageRequest, load: @escaping @Sendable () async throws -> Data) async throws -> RemoteImageFile {
         let keyData = try JSONEncoder().encode([
@@ -71,7 +92,11 @@ actor RemoteImageCache {
         if let task = pending[key] { return try await task.value }
         let target = directory.appendingPathComponent(key).appendingPathExtension((request.path as NSString).pathExtension.lowercased())
         let task = Task {
-            if let data = try? Data(contentsOf: target), let cached = try? RemoteImageDecoder.file(data, url: target) {
+            // Loading a transcript must not materialize every base64 response and
+            // original image at once. Duplicate requests still share this task.
+            await acquireLoadSlot()
+            defer { releaseLoadSlot() }
+            if let cached = try? RemoteImageDecoder.cachedFile(at: target) {
                 return cached
             }
             let data = try await load()
@@ -85,6 +110,14 @@ actor RemoteImageCache {
         pending[key] = task
         defer { pending[key] = nil }
         return try await task.value
+    }
+    private func acquireLoadSlot() async {
+        if activeLoads < maxConcurrentLoads { activeLoads += 1; return }
+        await withCheckedContinuation { loadWaiters.append($0) }
+    }
+    private func releaseLoadSlot() {
+        if loadWaiters.isEmpty { activeLoads -= 1 }
+        else { loadWaiters.removeFirst().resume() }
     }
     private func prune(excluding target: URL) {
         let keys: Set<URLResourceKey> = [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey]

@@ -41,12 +41,26 @@ private actor ImageFetchCounter {
     }
 }
 
+private actor ConcurrentImageFetches {
+    private(set) var active = 0
+    private(set) var peak = 0
+    private(set) var count = 0
+
+    func fetch(_ data: Data, fails: Bool) async throws -> Data {
+        active += 1; count += 1; peak = max(peak, active)
+        defer { active -= 1 }
+        try await Task.sleep(for: .milliseconds(30))
+        if fails { throw URLError(.networkConnectionLost) }
+        return data
+    }
+}
+
 @MainActor final class MediaTests: XCTestCase {
-    private func png() throws -> Data {
-        let context = try XCTUnwrap(CGContext(data: nil, width: 4, height: 3, bitsPerComponent: 8, bytesPerRow: 16,
+    private func png(width: Int = 4, height: Int = 3) throws -> Data {
+        let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
                                              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
         context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
-        context.fill(CGRect(x: 0, y: 0, width: 4, height: 3))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         let data = NSMutableData()
         let destination = try XCTUnwrap(CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil))
         CGImageDestinationAddImage(destination, try XCTUnwrap(context.makeImage()), nil)
@@ -175,5 +189,62 @@ private actor ImageFetchCounter {
         let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
         XCTAssertEqual(files.count, 2)
         XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(latest).url.path))
+    }
+
+    func testLargeImageThumbnailIsBoundedAndOriginalSurvivesCacheRestart() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let data = try png(width: 2400, height: 1800)
+        let cache = RemoteImageCache(directory: directory)
+        let file = try await cache.image(for: request()) { data }
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(file.thumbnail as CFData, nil))
+        let thumbnail = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        XCTAssertEqual(thumbnail.width, 1080)
+        XCTAssertEqual(thumbnail.height, 810)
+        XCTAssertEqual(file.pixelWidth, 2400)
+        XCTAssertEqual(file.pixelHeight, 1800)
+        XCTAssertEqual(try Data(contentsOf: file.url), data)
+        let restarted = RemoteImageCache(directory: directory)
+        let cached = try await restarted.image(for: request()) { throw URLError(.notConnectedToInternet) }
+        XCTAssertEqual(cached.thumbnail, file.thumbnail)
+        XCTAssertEqual(cached.pixelWidth, file.pixelWidth)
+    }
+
+    func testImageLoadConcurrencyIsBoundedAndFailureReleasesSlot() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = RemoteImageCache(directory: directory, maxConcurrentLoads: 2)
+        let fetches = ConcurrentImageFetches()
+        let data = try png()
+        let requests = (0..<8).map { request(message: "parallel-\($0)") }
+        let succeeded = await withTaskGroup(of: Bool.self) { group in
+            for (index, request) in requests.enumerated() {
+                group.addTask {
+                    do {
+                        _ = try await cache.image(for: request) { try await fetches.fetch(data, fails: index == 0) }
+                        return true
+                    } catch { return false }
+                }
+            }
+            var count = 0
+            for await success in group where success { count += 1 }
+            return count
+        }
+        XCTAssertEqual(succeeded, 7)
+        let peak = await fetches.peak, count = await fetches.count, active = await fetches.active
+        XCTAssertEqual(peak, 2)
+        XCTAssertEqual(count, 8)
+        XCTAssertEqual(active, 0)
+        _ = try await cache.image(for: requests[0]) { data }
+    }
+
+    func testMarkdownMemoTracksSourceAndMediaModeAcrossStreamRevisions() {
+        let cache = MarkdownSegmentCache()
+        let source = "before\nMEDIA:/tmp/image.png\n```swift\nlet value = 1"
+        XCTAssertEqual(cache.segments(for: source, renderMedia: false), MediaDirective.segments(source, renderMedia: false))
+        XCTAssertEqual(cache.segments(for: source, renderMedia: true), [.text("before"), .image("/tmp/image.png"), .code("let value = 1", language: "swift")])
+        let completed = source + "\n```\nafter"
+        XCTAssertEqual(cache.segments(for: completed, renderMedia: true), MediaDirective.segments(completed, renderMedia: true))
+        XCTAssertEqual(cache.segments(for: "", renderMedia: false), MediaDirective.segments("", renderMedia: false))
     }
 }

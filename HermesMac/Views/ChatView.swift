@@ -73,7 +73,7 @@ struct ChatView: View {
             }
 
             // Main Conversation or Empty State
-            if let c = store.current, (!c.messages.isEmpty || !c.tools.isEmpty || c.generating || c.loading || c.hasOlder || c.readOnlyReason != nil || c.error != nil) {
+            if let c = store.current, (!c.messages.isEmpty || c.toolCount > 0 || c.generating || c.loading || c.hasOlder || c.readOnlyReason != nil || c.error != nil) {
                 conversationView(c)
             } else {
                 emptyStateView
@@ -456,7 +456,7 @@ struct ChatView: View {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
                     }
-                    .onChange(of: c.tools.count) { _, _ in
+                    .onChange(of: c.toolCount) { _, _ in
                         if isAtBottom && !c.loading && imagePreview == nil {
                             withAnimation(.easeOut(duration: 0.2)) {
                                 proxy.scrollTo("bottom", anchor: .bottom)

@@ -83,7 +83,23 @@ import Foundation
         guard (200..<300).contains(http.statusCode) else {
             throw ClientError(message: http.statusCode == 401 ? "认证已失效，请在设置中重新登录或更新 session token" : "HTTP \(http.statusCode)：\(String(decoding: data.prefix(800), as: UTF8.self))", httpStatus: http.statusCode)
         }
-        guard let value = try? JSONDecoder().decode(JSON.self, from: data) else { throw ClientError(message: "服务接口未返回 JSON，请检查地址或升级 Hermes") }; return value
+        return try await Self.decodeResponse(data)
+    }
+    // Nonisolated async work runs on the generic executor, outside the UI actor.
+    // History and image responses can contain megabytes of JSON/base64 text.
+    nonisolated private static func decodeResponse(_ data: Data) async throws -> JSON {
+        try Task.checkCancellation()
+        guard let value = try? JSONDecoder().decode(JSON.self, from: data) else {
+            throw ClientError(message: "服务接口未返回 JSON，请检查地址或升级 Hermes")
+        }
+        try Task.checkCancellation()
+        return value
+    }
+    nonisolated private static func decodeImageData(_ value: String) async throws -> Data {
+        try Task.checkCancellation()
+        let data = try RemoteImageDecoder.dataURL(value)
+        try Task.checkCancellation()
+        return data
     }
     private func refresh() async throws {
         if let refreshTask { return try await refreshTask.value }
@@ -111,7 +127,7 @@ import Foundation
                 URLQueryItem(name: "profile", value: request.conversation.profile),
                 URLQueryItem(name: "session_id", value: request.conversation.storedID)
             ])
-            return try RemoteImageDecoder.dataURL(result["dataUrl"].string)
+            return try await Self.decodeImageData(result["dataUrl"].string)
         } catch let error as ClientError {
             switch error.httpStatus {
             case 403: throw ClientError(message: "服务端不允许读取这张图片（HTTP 403）", httpStatus: 403)

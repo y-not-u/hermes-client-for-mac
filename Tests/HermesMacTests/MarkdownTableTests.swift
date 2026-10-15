@@ -68,4 +68,33 @@ import AppKit
             XCTAssertTrue(hosting.fittingSize.height.isFinite)
         }
     }
+
+    func testUnchangedCodeRetainsSelectionAndRespondsToTypographyChanges() async throws {
+        let suite = "HermesMarkdown-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(ChatTypography.defaultSize, forKey: ChatTypography.key)
+        let text = "```swift\nlet value = 1\n```\nstreaming"
+        let hosting = NSHostingView(rootView: MarkdownView(text: text).defaultAppStorage(defaults))
+        hosting.frame = NSRect(x: 0, y: 0, width: 500, height: 400)
+        hosting.layoutSubtreeIfNeeded()
+        func editor(in view: NSView) -> NSTextView? {
+            if let text = view as? NSTextView { return text }
+            return view.subviews.lazy.compactMap { editor(in: $0) }.first
+        }
+        let code = try XCTUnwrap(editor(in: hosting))
+        let selection = NSRange(location: 4, length: 5)
+        code.setSelectedRange(selection)
+        hosting.rootView = MarkdownView(text: text + " suffix").defaultAppStorage(defaults)
+        hosting.layoutSubtreeIfNeeded()
+        XCTAssertTrue(editor(in: hosting) === code)
+        XCTAssertEqual(code.selectedRange(), selection)
+        defaults.set(22.0, forKey: ChatTypography.key)
+        try await Task.sleep(for: .milliseconds(50))
+        hosting.layoutSubtreeIfNeeded()
+        XCTAssertEqual(try XCTUnwrap(code.font).pointSize, ChatTypography.scaled(12.5, for: 22), accuracy: 0.01)
+        hosting.rootView = MarkdownView(text: "```swift\nlet value = 2\n```\nfinished").defaultAppStorage(defaults)
+        hosting.layoutSubtreeIfNeeded()
+        XCTAssertEqual(code.string, "let value = 2")
+    }
 }

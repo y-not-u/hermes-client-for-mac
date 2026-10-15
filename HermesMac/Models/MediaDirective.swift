@@ -6,6 +6,23 @@ enum MarkdownSegment: Equatable {
     case image(String)
 }
 
+/// One parse per source revision, owned by a single mounted Markdown view.
+/// Retain only the latest revision so streamed prefixes cannot fill a global cache.
+final class MarkdownSegmentCache {
+    private var source: String?
+    private var rendersMedia = false
+    private var value: [MarkdownSegment] = []
+
+    func segments(for text: String, renderMedia: Bool) -> [MarkdownSegment] {
+        if source != text || rendersMedia != renderMedia {
+            value = MediaDirective.segments(text, renderMedia: renderMedia)
+            source = text
+            rendersMedia = renderMedia
+        }
+        return value
+    }
+}
+
 enum MediaDirective {
     static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "bmp"]
     private static let tags = try! NSRegularExpression(

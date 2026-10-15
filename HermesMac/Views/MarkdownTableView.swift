@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-struct MarkdownTableView: View {
+struct MarkdownTableView: View, Equatable {
     let table: MarkdownTable
     let fontSize: CGFloat
 

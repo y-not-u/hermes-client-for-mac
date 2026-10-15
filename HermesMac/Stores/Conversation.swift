@@ -8,11 +8,19 @@ import Observation
     private(set) var lastSubmittedMessageID: String?
     var toolActivities: [ToolActivity] = []
     var tools: [ToolCall] { toolActivities.flatMap(\.tools) }
+    var toolCount: Int { toolActivities.reduce(0) { $0 + $1.tools.count } }
     var entries: [ConversationEntry] {
-        var result = toolActivities.filter { $0.afterMessageID == nil }.map(ConversationEntry.tools)
+        // Index once instead of scanning every tool group for every message.
+        // Unanchored groups lead the transcript; groups for unloaded history stay hidden.
+        let activitiesByMessage = Dictionary(grouping: toolActivities, by: \.afterMessageID)
+        var result: [ConversationEntry] = []
+        result.reserveCapacity(messages.count + toolActivities.count)
+        result.append(contentsOf: (activitiesByMessage[nil] ?? []).map(ConversationEntry.tools))
         for message in messages {
             result.append(.message(message))
-            result += toolActivities.filter { $0.afterMessageID == message.id }.map(ConversationEntry.tools)
+            if let activities = activitiesByMessage[message.id] {
+                result.append(contentsOf: activities.map(ConversationEntry.tools))
+            }
         }
         return result
     }
@@ -159,7 +167,7 @@ import Observation
         case "error": error = payload["message"].string; generating = false
         case "tool.start":
             let id = payload["tool_id"].string
-            if !tools.contains(where: { $0.id == id }) {
+            if !toolActivities.contains(where: { $0.tools.contains(where: { $0.id == id }) }) {
                 if activityID == nil {
                     let activity = ToolActivity(id: UUID().uuidString, afterMessageID: messages.last?.id, tools: [])
                     activityID = activity.id

@@ -5,6 +5,21 @@ import AppKit
 @testable import HermesMac
 
 @MainActor final class StateTests: XCTestCase {
+    func testTranscriptIndexPreservesToolOrderAndUnloadedAnchors() {
+        let c = Conversation(key: ConversationKey(service: "fixture", profile: "a", storedID: "stored"))
+        c.messages = [Message(id: "question", role: "user", text: "question"), Message(id: "answer", role: "assistant", text: "answer")]
+        c.toolActivities = [
+            ToolActivity(id: "first", afterMessageID: "question", tools: [ToolCall(id: "1", name: "read", details: "")]),
+            ToolActivity(id: "unloaded", afterMessageID: "older", tools: []),
+            ToolActivity(id: "leading", afterMessageID: nil, tools: []),
+            ToolActivity(id: "second", afterMessageID: "question", tools: [ToolCall(id: "2", name: "read", details: "")])
+        ]
+        XCTAssertEqual(c.entries.map(\.id), ["tools-leading", "message-question", "tools-first", "tools-second", "message-answer"])
+        XCTAssertEqual(c.toolCount, 2)
+        c.messages.insert(Message(id: "older", role: "user", text: "older"), at: 0)
+        XCTAssertEqual(c.entries.map(\.id), ["tools-leading", "message-older", "tools-unloaded", "message-question", "tools-first", "tools-second", "message-answer"])
+    }
+
     func testUncertainSessionOnlyBlocksItsOwnComposer() throws {
         let name = "HermesConcurrent-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
