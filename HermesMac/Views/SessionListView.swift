@@ -119,6 +119,7 @@ struct SessionListView: View {
                             ForEach(currentSessions) { session in
                                 SessionCardItem(
                                     session: session,
+                                    replyStatus: SessionReplyStatus.status(for: session.id, in: store),
                                     fontSize: fontSize,
                                     isSelected: store.selectedSession == session.id,
                                     onSelect: {
@@ -213,6 +214,7 @@ struct SessionListView: View {
 
 private struct SessionCardItem: View {
     let session: SessionSummary
+    let replyStatus: SessionReplyStatus
     let fontSize: Double
     let isSelected: Bool
     let onSelect: () -> Void
@@ -254,7 +256,17 @@ private struct SessionCardItem: View {
 
                         Spacer(minLength: 4)
 
-                        if let date = parsed.date {
+                        if replyStatus == .uncertain {
+                            Label("待确认", systemImage: "questionmark.circle")
+                                .font(.system(size: ChatTypography.scaled(10, for: fontSize), weight: .medium))
+                                .foregroundStyle(.orange)
+                                .fixedSize()
+                                .help("此会话的发送或生成状态待确认，请打开会话查询状态")
+                        } else if replyStatus == .answering {
+                            SessionReplyDot()
+                                .accessibilityLabel("正在生成回答")
+                                .help("此会话正在生成回答")
+                        } else if let date = parsed.date {
                             Text(date)
                                 .font(.system(size: ChatTypography.scaled(10, for: fontSize), weight: .regular))
                                 .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.8))
@@ -283,7 +295,10 @@ private struct SessionCardItem: View {
                 in: RoundedRectangle(cornerRadius: 8, style: .continuous)
             )
             .overlay {
-                if isSelected {
+                if replyStatus == .unread {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color.orange.opacity(0.85), lineWidth: 1.5)
+                } else if isSelected {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .strokeBorder(Color.accentColor.opacity(0.25), lineWidth: 1)
                 }
@@ -291,6 +306,7 @@ private struct SessionCardItem: View {
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityValue(replyStatus == .uncertain ? "待确认" : (replyStatus == .answering ? "回答中" : (replyStatus == .unread ? "回答已完成，未读" : "")))
         .onHover { isHovered = $0 }
         .contextMenu {
             Button("重命名…") { onRename() }
@@ -339,5 +355,36 @@ private struct SessionCardItem: View {
             return "定时任务 · 计划自动执行"
         }
         return text
+    }
+}
+
+private struct SessionReplyDot: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Circle()
+            .fill(Color.blue)
+            .frame(width: 6, height: 6)
+            .phaseAnimator(reduceMotion ? [true] : [false, true]) { dot, bright in
+                dot
+                    .opacity(bright ? 1 : 0.3)
+                    .scaleEffect(bright ? 1 : 0.8)
+            } animation: { _ in
+                .easeInOut(duration: 1.1)
+            }
+            .frame(width: 10, height: 10)
+    }
+}
+
+/// Shared by the visible and background rows; selection never owns reply status.
+enum SessionReplyStatus: Equatable {
+    case idle, answering, uncertain, unread
+
+    @MainActor static func status(for sessionID: String, in store: AppStore) -> SessionReplyStatus {
+        let key = ConversationKey(service: store.service, profile: store.selectedProfile, storedID: sessionID)
+        guard let conversation = store.conversations[key] else { return .idle }
+        if conversation.uncertain { return .uncertain }
+        if conversation.generating { return .answering }
+        return conversation.unread ? .unread : .idle
     }
 }

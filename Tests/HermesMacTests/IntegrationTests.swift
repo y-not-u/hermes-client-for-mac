@@ -389,7 +389,7 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertEqual(c.messages.last?.deliveryStatus, "已提交改向")
         await store.selectProfile("a")
         store.newSession(); store.draft = "another session"
-        XCTAssertFalse(store.canSend)
+        XCTAssertTrue(store.canSend)
     }
 
     func testSessionListAndSearchExcludeCronBeforePagination() async throws {
@@ -446,6 +446,134 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         let stats = try await fixture(["action": .string("stats")])
         XCTAssertEqual(stats["refreshes"].number, 0)
         XCTAssertEqual(stats["tickets"].number, 1)
+    }
+
+    func testConcurrentSessionsInSameProfileKeepStreamsAndDraftsIsolated() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "first question"; await store.send()
+        let first = try XCTUnwrap(store.current)
+        store.draft = "first draft"
+        store.newSession(); store.draft = "second question"
+        XCTAssertTrue(store.canSend)
+        XCTAssertFalse(store.canSwitchModel)
+        await store.send()
+        let second = try XCTUnwrap(store.current)
+        XCTAssertNotEqual(first.key, second.key)
+        XCTAssertTrue(first.generating && second.generating)
+        store.draft = "second draft"
+        try await emit(first.key.storedID, type: "message.delta", text: "first partial")
+        try await emit(second.key.storedID, type: "message.delta", text: "second partial")
+        try await eventually { first.messages.last?.text == "first partial" && second.messages.last?.text == "second partial" }
+        try await emit(first.key.storedID, type: "message.complete", text: "first answer")
+        try await eventually { !first.generating }
+        XCTAssertTrue(second.generating)
+        XCTAssertTrue(first.unread)
+        XCTAssertEqual(store.draft, "second draft")
+        await store.openSession(first.key.storedID)
+        XCTAssertEqual(store.draft, "first draft")
+        XCTAssertEqual(first.messages.map(\.text), ["first question", "first answer"])
+        XCTAssertFalse(first.unread)
+        XCTAssertFalse(store.canSwitchModel)
+        let stats = try await fixture(["action": .string("stats")])
+        let submissions = stats["requests"].array.filter { $0["method"].string == "prompt.submit" }
+        XCTAssertEqual(Set(submissions.map { $0["params"]["session_id"].string }), [try XCTUnwrap(first.runtimeID), try XCTUnwrap(second.runtimeID)])
+    }
+
+    func testPendingSubmitOnlyLocksItsOwnSessionAndKeepsProfileModelGuard() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "first initial"; await store.send()
+        let first = try XCTUnwrap(store.current)
+        try await emit(first.key.storedID, type: "message.complete", text: "first answer")
+        try await eventually { !first.generating }
+        store.newSession(); store.draft = "second initial"; await store.send()
+        let second = try XCTUnwrap(store.current)
+        try await emit(second.key.storedID, type: "message.complete", text: "second answer")
+        try await eventually { !second.generating }
+        await store.openSession(first.key.storedID)
+        _ = try await fixture(["action": .string("configure"), "submit_delay": .number(0.5)])
+        store.draft = "first next"
+        let firstSend = Task { await store.send() }
+        try await eventually { first.generating }
+        // Finish its stream before the RPC acknowledgement: the pending send must
+        // still lock this session and keep profile-level model changes disabled.
+        try await emit(first.key.storedID, type: "message.complete", text: "fast answer")
+        try await eventually { !first.generating }
+        store.draft = "duplicate"
+        XCTAssertFalse(store.canSend)
+        XCTAssertFalse(store.canSwitchModel)
+        XCTAssertTrue(store.profileBusy("a"))
+        await store.send()
+        await store.openSession(second.key.storedID)
+        store.draft = "second next"
+        XCTAssertTrue(store.canSend)
+        XCTAssertTrue(store.canRemoveSession(second.key.storedID, profile: "a"))
+        XCTAssertFalse(store.canRemoveSession(first.key.storedID, profile: "a"))
+        _ = try await fixture(["action": .string("configure"), "submit_delay": .number(0.8)])
+        let secondSend = Task { await store.send() }
+        try await eventually { second.generating }
+        await firstSend.value
+        // Completing one submission must not release another session's lock.
+        store.draft = "second duplicate"
+        XCTAssertFalse(store.canSend)
+        await secondSend.value
+        let stats = try await fixture(["action": .string("stats")])
+        XCTAssertEqual(stats["requests"].array.filter { $0["method"].string == "prompt.submit" }.count, 4)
+    }
+
+    func testPendingFollowUpOnlyLocksItsOwnSession() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "first question"; await store.send()
+        let first = try XCTUnwrap(store.current)
+        store.newSession(); store.draft = "second question"; await store.send()
+        let second = try XCTUnwrap(store.current)
+        try await emit(second.key.storedID, type: "message.complete", text: "second answer")
+        try await eventually { !second.generating }
+        await store.openSession(first.key.storedID)
+        _ = try await fixture(["action": .string("configure"), "correction_delay": .number(0.3)])
+        store.draft = "first guidance"
+        let sending = Task { await store.send() }
+        try await eventually { first.messages.last?.text == "first guidance" }
+        store.draft = "duplicate guidance"
+        XCTAssertFalse(store.canSend)
+        await store.openSession(second.key.storedID)
+        store.draft = "second next turn"
+        XCTAssertTrue(store.canSend)
+        XCTAssertTrue(store.canRemoveSession(second.key.storedID, profile: "a"))
+        XCTAssertFalse(store.canRemoveSession(first.key.storedID, profile: "a"))
+        XCTAssertFalse(store.canSwitchModel)
+        await store.send()
+        XCTAssertTrue(second.generating)
+        await sending.value
+        XCTAssertEqual(first.messages.last?.deliveryStatus, "已提交改向")
+        XCTAssertEqual(second.messages.filter { $0.role == "user" }.map(\.text), ["second question", "second next turn"])
+    }
+
+    func testNewComposerDuringPendingCreateKeepsSelectionAndDraft() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        _ = try await fixture(["action": .string("configure"), "create_delay": .number(0.3)])
+        store.draft = "first question"
+        let firstSend = Task { await store.send() }
+        try await eventually { store.profileBusy("a") }
+        XCTAssertFalse(store.canSwitchModel)
+        store.draft = "duplicate"
+        XCTAssertFalse(store.canSend)
+        store.newSession(); store.draft = "second question"
+        XCTAssertTrue(store.canSend)
+        let secondSend = Task { await store.send() }
+        try await eventually { store.conversations.values.contains { $0.messages.first?.text == "first question" } }
+        // A late first creation must not select itself or clear the new composer.
+        XCTAssertNotEqual(store.current?.messages.first?.text, "first question")
+        await firstSend.value
+        await secondSend.value
+        let second = try XCTUnwrap(store.current)
+        XCTAssertEqual(second.messages.first?.text, "second question")
+        XCTAssertEqual(store.local.state(store.service).lastSession["a"], second.key.storedID)
+        XCTAssertTrue(store.draft.isEmpty)
+        XCTAssertEqual(store.conversations.values.filter { $0.generating }.count, 2)
     }
 
     func testConcurrentProfilesApprovalUnreadAndDraftIsolation() async throws {

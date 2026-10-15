@@ -40,7 +40,10 @@ import AppKit
     private var reconnectTask: Task<Void, Never>?
     private var searchTask: Task<Void, Never>?
     private var listRevision: [String: UUID] = [:]
-    private var busyProfiles: Set<String> = []
+    private var sendingSessions: Set<ConversationKey> = []
+    // A draft has no stored ID until creation returns. Navigation identifies each
+    // new-session composer so a later composer can create independently.
+    private var creatingSessions: [UUID: String] = [:]
     private var sessionMutations: Set<ConversationKey> = []
     @ObservationIgnored private var conversationAccessOrder: [ConversationKey] = []
     private let maxCachedConversations = 20
@@ -62,7 +65,7 @@ import AppKit
             guard let c = conversations[key], key != currentKey,
                   !c.generating, !c.uncertain, !c.loading, !c.queryingStatus, !c.unread,
                   c.recoverableMessageID == nil, c.approvals.isEmpty, c.submittingApprovals.isEmpty,
-                  !busyProfiles.contains(key.profile), !modelSwitching.contains(key.profile),
+                  !sendingSessions.contains(key), !modelSwitching.contains(key.profile),
                   !sessionMutations.contains(key), modelConfirmation?.key != key,
                   !modelLoading.contains(ModelPickerContext(service: key.service, profile: key.profile, sessionID: key.storedID)) else { continue }
             conversations.removeValue(forKey: key)
@@ -94,10 +97,11 @@ import AppKit
     var profileTitle: String { profiles.first(where: { $0.name == selectedProfile })?.displayName ?? "Hermes" }
     var canSend: Bool {
         connected && !selectedProfile.isEmpty && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        && !busyProfiles.contains(selectedProfile) && !modelSwitching.contains(selectedProfile) && current?.readOnlyReason == nil && current?.loading != true
+        && !(currentKey.map { sendingSessions.contains($0) } ?? (creatingSessions[navigation] != nil))
+        && !modelSwitching.contains(selectedProfile) && current?.readOnlyReason == nil && current?.loading != true
         && (selectedSession == nil || current != nil)
         && (currentKey.map { !sessionMutations.contains($0) } ?? true)
-        && !conversations.values.contains { $0.key.profile == selectedProfile && ($0.uncertain || ($0.generating && $0 !== current)) }
+        && current?.uncertain != true
     }
     var modelContext: ModelPickerContext {
         ModelPickerContext(service: service, profile: selectedProfile, sessionID: selectedSession)
@@ -175,7 +179,10 @@ import AppKit
                 sessionID: selectedProfile == profile && navigation == origin ? selectedSession : startingContext.sessionID))
         }
     }
-    func profileBusy(_ profile: String) -> Bool { busyProfiles.contains(profile) || conversations.values.contains { $0.key.profile == profile && ($0.generating || $0.uncertain) } }
+    func profileBusy(_ profile: String) -> Bool {
+        creatingSessions.values.contains(profile) || sendingSessions.contains { $0.profile == profile }
+        || conversations.values.contains { $0.key.profile == profile && ($0.generating || $0.uncertain) }
+    }
     func profileApproval(_ profile: String) -> Bool { conversations.values.contains { $0.key.profile == profile && !$0.approvals.isEmpty } }
     func profileUnread(_ profile: String) -> Bool { conversations.values.contains { $0.key.profile == profile && $0.unread } }
     private func persistDraft() {
@@ -200,8 +207,8 @@ import AppKit
             botScreen.disconnected()
             client?.disconnect(); client = next; connected = false; connecting = true; connection = "连接中…"; error = nil
             models.reset(); modelSwitching = []; modelConfirmation = nil
-            busyProfiles = []; routes = [:]; earlyFrames = [:]; buffered = []; flushTask?.cancel(); flushTask = nil
-            if changed { conversationAccessOrder = []; conversations = [:]; sessions = [:]; profiles = []; busyProfiles = []; selectedProfile = ""; selectedSession = nil; draft = ""; search = "" }
+            sendingSessions = []; creatingSessions = [:]; routes = [:]; earlyFrames = [:]; buffered = []; flushTask?.cancel(); flushTask = nil
+            if changed { conversationAccessOrder = []; conversations = [:]; sessions = [:]; profiles = []; sendingSessions = []; creatingSessions = [:]; selectedProfile = ""; selectedSession = nil; draft = ""; search = "" }
             address = next.service; local.address = address
             installCallbacks(next, epoch: epoch)
             try await next.connect(); guard epoch == generation else { return }
@@ -469,7 +476,16 @@ import AppKit
             return
         }
         let profile = selectedProfile; let text = draft; let epoch = generation; let startingSession = selectedSession; let originNavigation = navigation
-        busyProfiles.insert(profile); defer { if epoch == generation { busyProfiles.remove(profile); pruneConversationCache() } }
+        var sendingKey = currentKey
+        if let sendingKey { sendingSessions.insert(sendingKey) }
+        else { creatingSessions[originNavigation] = profile }
+        defer {
+            if epoch == generation {
+                if let sendingKey { sendingSessions.remove(sendingKey) }
+                creatingSessions.removeValue(forKey: originNavigation)
+                pruneConversationCache()
+            }
+        }
         do {
             var c: Conversation
             if let current { c = current }
@@ -481,7 +497,11 @@ import AppKit
                 let key = ConversationKey(service: service, profile: profile, storedID: id)
                 c = Conversation(key: key); c.snapshot(snapshot); conversations[key] = c; touchConversation(key); bind(c)
                 sessions[profile, default: []].insert(SessionSummary(id: id, title: String(text.prefix(40))), at: 0)
-                local.update(service) { $0.lastSession[profile] = id }
+                sendingKey = key; sendingSessions.insert(key)
+                creatingSessions.removeValue(forKey: originNavigation)
+                if navigation == originNavigation || selectedProfile != profile {
+                    local.update(service) { $0.lastSession[profile] = id }
+                }
                 let draftKey = LocalState.draftKey(profile: profile, session: startingSession)
                 let pendingDraft = local.state(service).drafts[draftKey] ?? ""
                 if navigation == originNavigation {
@@ -493,7 +513,8 @@ import AppKit
             c.begin(text)
             local.update(service) {
                 let key = LocalState.draftKey(profile: profile, session: startingSession)
-                if $0.drafts[key] == text { $0.drafts[key] = "" }
+                if (startingSession != nil || navigation == originNavigation || selectedProfile != profile),
+                   $0.drafts[key] == text { $0.drafts[key] = "" }
             }
             if navigation == originNavigation && selectedProfile == profile && selectedSession == c.key.storedID {
                 if draft == text { draft = "" } else { persistDraft() }
@@ -510,8 +531,8 @@ import AppKit
         guard let runtime = c.runtimeID else { return }
         let text = draft; let epoch = generation; let origin = navigation
         let profile = c.key.profile
-        busyProfiles.insert(profile)
-        defer { if epoch == generation { busyProfiles.remove(profile); pruneConversationCache() } }
+        sendingSessions.insert(c.key)
+        defer { if epoch == generation { sendingSessions.remove(c.key); pruneConversationCache() } }
         let messageID = c.appendFollowUp(text, splitReply: !queue)
         draft = ""
         do {
@@ -613,7 +634,7 @@ import AppKit
     func canRemoveSession(_ id: String, profile: String) -> Bool {
         let key = ConversationKey(service: service, profile: profile, storedID: id)
         let conversation = conversations[key]
-        return connected && !busyProfiles.contains(profile) && !sessionMutations.contains(key)
+        return connected && !sendingSessions.contains(key) && !sessionMutations.contains(key)
             && conversation?.generating != true && conversation?.uncertain != true && conversation?.loading != true
     }
     func removeSession(_ row: SessionSummary, archive: Bool, profile: String, service expectedService: String) async {

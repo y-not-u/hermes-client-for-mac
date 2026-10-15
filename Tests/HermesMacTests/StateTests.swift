@@ -5,6 +5,28 @@ import AppKit
 @testable import HermesMac
 
 @MainActor final class StateTests: XCTestCase {
+    func testUncertainSessionOnlyBlocksItsOwnComposer() throws {
+        let name = "HermesConcurrent-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = AppStore(local: LocalState(defaults: defaults))
+        store.connected = true; store.selectedProfile = "a"
+        let first = Conversation(key: ConversationKey(service: store.service, profile: "a", storedID: "first"))
+        first.generating = true; first.uncertain = true
+        let second = Conversation(key: ConversationKey(service: store.service, profile: "a", storedID: "second"))
+        second.runtimeID = "second-runtime"
+        store.conversations[first.key] = first; store.conversations[second.key] = second
+        store.selectedSession = first.key.storedID; store.draft = "retry"
+        XCTAssertFalse(store.canSend)
+        store.selectedSession = second.key.storedID
+        XCTAssertTrue(store.canSend)
+        XCTAssertTrue(store.canRemoveSession(second.key.storedID, profile: "a"))
+        XCTAssertFalse(store.canSwitchModel)
+        store.newSession(); store.draft = "new question"
+        XCTAssertTrue(store.canSend)
+        XCTAssertTrue(store.profileBusy("a"))
+    }
+
     func testConversationCacheProtectsStateAndRetriesPreviouslyProtectedEntries() throws {
         let name = "HermesMemory-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))

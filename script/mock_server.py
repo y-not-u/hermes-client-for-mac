@@ -24,6 +24,7 @@ class Fixture:
         self.counter = 0
         self.native = False
         self.create_delay = 0
+        self.submit_delay = 0
         self.refreshes = 0
         self.tickets = 0
         self.correction_status = 'redirected'
@@ -49,6 +50,7 @@ class Fixture:
             await self.display.control(body)
             self.native = body.get('native', self.native)
             self.create_delay = body.get('create_delay', self.create_delay)
+            self.submit_delay = body.get('submit_delay', self.submit_delay)
             self.complete_on_resume = body.get('complete_on_resume', self.complete_on_resume)
             self.resume_delay = body.get('resume_delay', self.resume_delay)
             self.session_rows = body.get('session_rows', self.session_rows)
@@ -237,6 +239,7 @@ class Fixture:
             if status != 'rejected':
                 session.setdefault('inflight', {}).setdefault('corrections', []).append(params['text'])
         elif method == 'prompt.submit':
+            await asyncio.sleep(self.submit_delay)
             session = next(s for s in self.sessions.values() if s['session_id'] == params['session_id'])
             result = {'status': 'queued' if session['running'] and params.get('queued') else 'streaming'}
             session = next(s for s in self.sessions.values() if s['session_id'] == params['session_id'])
