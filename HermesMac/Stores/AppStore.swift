@@ -108,7 +108,9 @@ import AppKit
     }
     var modelCatalog: ModelCatalog? { modelCatalogs[modelContext] }
     var canSwitchModel: Bool {
-        connected && !selectedProfile.isEmpty && !profileBusy(selectedProfile)
+        connected && !selectedProfile.isEmpty
+        && !(currentKey.map { sendingSessions.contains($0) } ?? (creatingSessions[navigation] != nil))
+        && current?.generating != true && current?.uncertain != true
         && !modelSwitching.contains(selectedProfile) && current?.loading != true
         && current?.readOnlyReason == nil && (selectedSession == nil || current?.runtimeID != nil)
         && (currentKey.map { !sessionMutations.contains($0) } ?? true)

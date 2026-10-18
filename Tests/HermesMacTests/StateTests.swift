@@ -33,12 +33,14 @@ import AppKit
         store.conversations[first.key] = first; store.conversations[second.key] = second
         store.selectedSession = first.key.storedID; store.draft = "retry"
         XCTAssertFalse(store.canSend)
+        XCTAssertFalse(store.canSwitchModel)
         store.selectedSession = second.key.storedID
         XCTAssertTrue(store.canSend)
         XCTAssertTrue(store.canRemoveSession(second.key.storedID, profile: "a"))
-        XCTAssertFalse(store.canSwitchModel)
+        XCTAssertTrue(store.canSwitchModel)
         store.newSession(); store.draft = "new question"
         XCTAssertTrue(store.canSend)
+        XCTAssertTrue(store.canSwitchModel)
         XCTAssertTrue(store.profileBusy("a"))
     }
 

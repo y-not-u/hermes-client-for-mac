@@ -169,6 +169,13 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         await store.send()
         XCTAssertTrue(c.generating)
         XCTAssertFalse(store.canSwitchModel)
+        store.newSession()
+        XCTAssertTrue(store.canSwitchModel)
+        await store.loadModels()
+        await store.switchModel(ModelChoice(provider: "other", model: "new-model"))
+        let second = try XCTUnwrap(store.current)
+        XCTAssertNotEqual(second.key, c.key)
+        XCTAssertEqual(store.modelCatalog?.model, "new-model")
         await store.selectProfile("b"); await store.loadModels()
         XCTAssertEqual(store.modelCatalog?.model, "default-b")
         await store.selectProfile("a"); await store.loadModels()
@@ -487,7 +494,7 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         store.draft = "first draft"
         store.newSession(); store.draft = "second question"
         XCTAssertTrue(store.canSend)
-        XCTAssertFalse(store.canSwitchModel)
+        XCTAssertTrue(store.canSwitchModel)
         await store.send()
         let second = try XCTUnwrap(store.current)
         XCTAssertNotEqual(first.key, second.key)
@@ -505,7 +512,10 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertEqual(store.draft, "first draft")
         XCTAssertEqual(first.messages.map(\.text), ["first question", "first answer"])
         XCTAssertFalse(first.unread)
+        XCTAssertTrue(store.canSwitchModel)
+        await store.openSession(second.key.storedID)
         XCTAssertFalse(store.canSwitchModel)
+        await store.openSession(first.key.storedID)
         let stats = try await fixture(["action": .string("stats")])
         let submissions = stats["requests"].array.filter { $0["method"].string == "prompt.submit" }
         XCTAssertEqual(Set(submissions.map { $0["params"]["session_id"].string }), [try XCTUnwrap(first.runtimeID), try XCTUnwrap(second.runtimeID)])
@@ -574,7 +584,7 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertTrue(store.canSend)
         XCTAssertTrue(store.canRemoveSession(second.key.storedID, profile: "a"))
         XCTAssertFalse(store.canRemoveSession(first.key.storedID, profile: "a"))
-        XCTAssertFalse(store.canSwitchModel)
+        XCTAssertTrue(store.canSwitchModel)
         await store.send()
         XCTAssertTrue(second.generating)
         await sending.value
