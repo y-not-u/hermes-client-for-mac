@@ -190,12 +190,11 @@ import AppKit
         let key = LocalState.draftKey(profile: selectedProfile, session: selectedSession)
         local.setDraft(draft, for: key, service: service)
     }
-    func connect(address newAddress: String? = nil, token: String? = nil) async {
+    func connect(address newAddress: String? = nil) async {
         reconnectTask?.cancel(); reconnectTask = nil
         let attempt = UUID(); connectionAttempt = attempt; var activated = false
         do {
             let next = try makeClient(newAddress ?? address)
-            if let token { try await next.setSessionToken(token) }
             guard connectionAttempt == attempt else { return }
             let changed = next.service != service
             if changed {
@@ -533,27 +532,24 @@ import AppKit
         let profile = c.key.profile
         sendingSessions.insert(c.key)
         defer { if epoch == generation { sendingSessions.remove(c.key); pruneConversationCache() } }
-        let messageID = c.appendFollowUp(text, splitReply: !queue)
+        // Supplemental input must not cancel or split the active model response.
+        let messageID = c.appendFollowUp(text, splitReply: false)
         draft = ""
         do {
             var status = ""
-            var preserveReply = queue
+            var preserveReply = true
             if !queue {
-                for method in [HermesRPCRequest.FollowUpMethod.redirect, .steer] {
-                    do {
-                        let result = try await client.execute(.followUp(method, profile: profile, runtimeID: runtime, text: text))
-                        guard epoch == generation else { return }
-                        flushFrames()
-                        let response = result["status"].string
-                        if response == "redirected" || response == "queued" {
-                            preserveReply = method == .redirect && response == "queued"
-                            status = method == .steer ? "已提交引导，等待执行边界" : (response == "queued" ? "已排队，等待下一轮" : "已提交改向")
-                            break
-                        }
-                        guard response == "rejected" else { throw ClientError(message: "服务返回了未知提交状态") }
-                    } catch let error as ClientError where error.rpcCode == -32601 || error.rpcCode == 4010 {
-                        // Only a definite refusal permits trying another method.
+                do {
+                    let result = try await client.execute(.followUp(.steer, profile: profile, runtimeID: runtime, text: text))
+                    guard epoch == generation else { return }
+                    flushFrames()
+                    switch result["status"].string {
+                    case "queued": status = "已提交补充，等待执行边界"
+                    case "rejected": break
+                    default: throw ClientError(message: "服务返回了未知提交状态")
                     }
+                } catch let error as ClientError where error.rpcCode == -32601 || error.rpcCode == 4010 {
+                    // A definite refusal permits queueing a separate turn.
                 }
             }
             guard epoch == generation else { return }

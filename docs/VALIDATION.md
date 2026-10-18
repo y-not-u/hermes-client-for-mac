@@ -76,6 +76,18 @@
 
 同日补充：列表中已完成未读的会话使用橘黄色边框，打开会话清除；生成中继续使用呼吸小蓝点。复用现有 `unread` 状态，并新增列表状态回归验证后台完成、已读清除、新回答与前台完成。完整测试更新为 97 项（96 通过、1 项 opt-in live test 跳过、0 失败）；签名 Debug 构建和启动通过。日志为 `/tmp/hermes-unread-border-tests.log`。未进行真实未读边框的界面验收。
 
+### 2026-10-18 设置认证入口简化
+
+移除手动 Session Token 输入、显隐和覆盖保存入口，测试连接与重连沿用按服务地址保存的 Keychain 凭据；保留旧凭据读取兼容。官方账号登录的“清除”按钮改为“注销”，同步调整提示和部署说明。
+
+`./script/build_and_run.sh --build`：Debug 构建通过。`./script/test.sh`：117 项测试，116 通过、1 项 opt-in 真实服务测试跳过、0 失败。默认临时 Python 环境的 aiohttp 导入异常，改用独立 `HERMES_TEST_VENV` 重跑通过。未进行真实服务登录/注销或设置窗口的人工界面验收。
+
+### 2026-10-18 生成中追加保持输出
+
+普通追加改用 `session.steer`，保留当前回答的流式归属；不再调用会取消当前模型请求的 `session.redirect`。明确拒绝或不支持 steer 时使用 `prompt.submit(queued=true)`，断线或未知结果不重发。状态显示“已提交补充，等待执行边界”，实际采用时间由服务端决定。
+
+`HERMES_TEST_VENV=/tmp/hermes-supplement-test-venv ./script/test.sh`：118 项测试，117 通过、1 项 opt-in 真实服务测试跳过、0 失败。回归覆盖追加后继续输出、提交等待期间继续输出、连续追加、明确拒绝后的排队、完成边界竞态、断线不重发和跨会话隔离。默认临时 aiohttp 环境导入失败，使用独立临时环境验证。`./script/build_and_run.sh --build` 与 `--verify`：Debug 构建及启动进程检查通过。日志在 `/tmp/hermes-supplement-full.log`。本次未进行真实服务聊天或人工界面复测。
+
 ## 可选真实服务测试
 
 只有显式设置服务环境变量才运行 live test。先在应用设置中完成官方登录，下面的常规命令复用该服务在 Keychain 中保存的凭据。聊天模式会在选定服务创建两个测试会话并调用模型，可能产生费用：

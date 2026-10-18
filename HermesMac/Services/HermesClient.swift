@@ -45,10 +45,6 @@ import Foundation
         c.path = baseURL.path + path; c.queryItems = query.isEmpty ? nil : query
         return c.url!
     }
-    func setSessionToken(_ token: String, persist: Bool = true) async throws {
-        credentials = Credentials(sessionToken: token.trimmingCharacters(in: .whitespacesAndNewlines)); credentialsLoaded = true
-        if persist { try await saveCredentials() }
-    }
     private func loadCredentials() async throws {
         guard !credentialsLoaded else { return }
         let account = service
@@ -81,7 +77,7 @@ import Foundation
             try await refresh(); return try await rest(path, method: method, query: query, body: body, authenticated: authenticated, retry: false)
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw ClientError(message: http.statusCode == 401 ? "认证已失效，请在设置中重新登录或更新 session token" : "HTTP \(http.statusCode)：\(String(decoding: data.prefix(800), as: UTF8.self))", httpStatus: http.statusCode)
+            throw ClientError(message: http.statusCode == 401 ? "认证已失效，请在设置中重新登录" : "HTTP \(http.statusCode)：\(String(decoding: data.prefix(800), as: UTF8.self))", httpStatus: http.statusCode)
         }
         return try await Self.decodeResponse(data)
     }
@@ -149,7 +145,7 @@ import Foundation
             guard !ticket["ticket"].string.isEmpty else { throw ClientError(message: "缺少 WebSocket 票据，请升级 Hermes") }
             auth = URLQueryItem(name: "ticket", value: ticket["ticket"].string)
         } else {
-            guard !credentials.sessionToken.isEmpty else { throw ClientError(message: "请在设置中填写本机服务的 session token") }
+            guard !credentials.sessionToken.isEmpty else { throw ClientError(message: "缺少登录凭据，请在设置中通过浏览器登录") }
             auth = URLQueryItem(name: "token", value: credentials.sessionToken)
         }
         try Task.checkCancellation()

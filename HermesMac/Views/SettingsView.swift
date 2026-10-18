@@ -19,8 +19,6 @@ struct SettingsView: View {
     @AppStorage(ChatTypography.key) private var fontSize = ChatTypography.defaultSize
     @State private var selectedTab: SettingsTab = .connection
     @State private var address = ""
-    @State private var token = ""
-    @State private var showToken = false
     @State private var busy = false
     @State private var hasSavedCredentials = false
     @State private var testResult: ConnectionTestResult?
@@ -216,7 +214,7 @@ struct SettingsView: View {
                 Label("身份认证凭据 (Authentication)", systemImage: "lock.shield")
                     .font(.system(size: 13, weight: .semibold))
 
-                // Mode 1: 官方网页授权 (OAuth PKCE)
+                // 官方网页授权 (OAuth PKCE)
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .center, spacing: 10) {
                         Image(systemName: "safari")
@@ -265,11 +263,11 @@ struct SettingsView: View {
                                 .disabled(busy)
 
                                 if hasSavedCredentials {
-                                    Button("清除") {
+                                    Button("注销") {
                                         clearCredentials()
                                     }
                                     .controlSize(.small)
-                                    .help("清除钥匙串中该服务的已保存凭据")
+                                    .help("移除该服务在钥匙串中保存的登录凭据")
                                 }
                             }
                         }
@@ -286,56 +284,6 @@ struct SettingsView: View {
                         .padding(.vertical, 6)
                         .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }
-                }
-
-                Divider()
-
-                // Mode 2: 本机 Session Token
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .center, spacing: 10) {
-                        Image(systemName: "key")
-                            .font(.system(size: 16))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 22, height: 22)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("本机 Session Token")
-                                .font(.system(size: 12.5, weight: .medium))
-
-                            Text("留空沿用钥匙串已有凭据。适用于命令行自建实例或调试 Token。")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    HStack(spacing: 8) {
-                        Group {
-                            if showToken {
-                                TextField("留空沿用钥匙串凭据，输入新 Token 将覆盖保存", text: $token)
-                            } else {
-                                SecureField("留空沿用钥匙串凭据，输入新 Token 将覆盖保存", text: $token)
-                            }
-                        }
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12, design: .monospaced))
-
-                        Button {
-                            showToken.toggle()
-                        } label: {
-                            Image(systemName: showToken ? "eye.slash" : "eye")
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help(showToken ? "隐藏 Token" : "显示 Token")
-
-                        if !token.isEmpty {
-                            Button("清空") {
-                                token = ""
-                            }
-                            .controlSize(.small)
-                        }
-                    }
-                    .padding(.leading, 32)
                 }
             }
             .padding(14)
@@ -584,7 +532,7 @@ struct SettingsView: View {
             refreshCredentialsState()
             testResult = ConnectionTestResult(
                 success: true,
-                message: "已清除钥匙串凭据",
+                message: "已移除登录凭据",
                 latencyMs: nil,
                 version: nil,
                 authRequired: nil,
@@ -602,9 +550,6 @@ struct SettingsView: View {
             do {
                 let start = Date()
                 let client = try HermesClient(address: targetAddress)
-                if !token.isEmpty {
-                    try await client.setSessionToken(token, persist: false)
-                }
                 let status = try await client.testConnection()
                 let elapsed = Int(Date().timeIntervalSince(start) * 1000)
                 let version = status["version"].string
@@ -625,7 +570,7 @@ struct SettingsView: View {
                 } else if desc.contains("timedOut") {
                     suggestion = "网络连接超时。请检查目标 IP 地址是否正确，以及局域网防火墙是否放行该端口。"
                 } else if desc.contains("401") || desc.contains("403") {
-                    suggestion = "服务需要认证（401/403）。请使用官方网页登录或输入有效的 Session Token。"
+                    suggestion = "服务需要认证（401/403）。请使用官方网页登录。"
                 }
                 testResult = ConnectionTestResult(
                     success: false,
@@ -644,9 +589,8 @@ struct SettingsView: View {
         testResult = nil
         let targetAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
         Task {
-            await store.connect(address: targetAddress, token: token.isEmpty ? nil : token)
+            await store.connect(address: targetAddress)
             if store.connected {
-                token = ""
                 refreshCredentialsState()
             }
             busy = false
@@ -689,7 +633,6 @@ struct SettingsView: View {
                 try await flow.signIn(client: client)
                 guard !Task.isCancelled else { return }
                 await store.connect(address: targetAddress)
-                token = ""
                 refreshCredentialsState()
                 if store.connected {
                     testResult = ConnectionTestResult(

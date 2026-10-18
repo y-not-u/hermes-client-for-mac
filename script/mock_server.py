@@ -226,7 +226,7 @@ class Fixture:
             if self.drop_on_correction:
                 await ws.close()
                 return
-            if self.correction_error is not None and method == 'session.redirect':
+            if self.correction_error is not None:
                 await ws.send_json({'jsonrpc': '2.0', 'id': frame['id'], 'error': {'code': self.correction_error, 'message': 'correction refused'}})
                 return
             if self.complete_on_correction:
