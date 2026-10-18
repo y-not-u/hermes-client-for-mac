@@ -259,10 +259,11 @@ struct SettingsView: View {
                                 .disabled(busy)
 
                                 if hasSavedCredentials {
-                                    Button("注销") {
+                                    Button("注销", role: .destructive) {
                                         clearCredentials()
                                     }
-                                    .controlSize(.small)
+                                    .controlSize(.regular)
+                                    .foregroundStyle(.red)
                                     .help("移除该服务在钥匙串中保存的登录凭据")
                                 }
                             }
