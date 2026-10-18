@@ -14,7 +14,7 @@ struct SessionListView: View {
     @FocusState private var isSearchFocused: Bool
 
     private var currentSessions: [SessionSummary] {
-        store.sessions[store.selectedProfile] ?? []
+        store.displayedSessions(profile: store.selectedProfile)
     }
 
     var body: some View {
@@ -124,6 +124,8 @@ struct SessionListView: View {
                                     replyStatus: SessionReplyStatus.status(for: session.id, in: store),
                                     fontSize: fontSize,
                                     isSelected: store.selectedSession == session.id,
+                                    isPinned: store.isSessionPinned(session.id, profile: store.selectedProfile),
+                                    onTogglePin: { store.toggleSessionPin(session, profile: store.selectedProfile) },
                                     onSelect: {
                                         Task { await store.openSession(session.id) }
                                     },
@@ -219,6 +221,8 @@ private struct SessionCardItem: View {
     let replyStatus: SessionReplyStatus
     let fontSize: Double
     let isSelected: Bool
+    let isPinned: Bool
+    let onTogglePin: () -> Void
     let onSelect: () -> Void
     let onRename: () -> Void
     let canRemove: Bool
@@ -250,6 +254,13 @@ private struct SessionCardItem: View {
                 VStack(alignment: .leading, spacing: 3) {
                     // Title row + optional extracted time badge
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        if isPinned {
+                            Image(systemName: "pin.fill")
+                                .font(.system(size: ChatTypography.scaled(10, for: fontSize)))
+                                .foregroundStyle(.secondary)
+                                .accessibilityLabel("已置顶")
+                                .help("已置顶")
+                        }
                         Text(parsed.title)
                             .font(.system(size: ChatTypography.scaled(12.5, for: fontSize), weight: isSelected ? .semibold : .medium))
                             .foregroundStyle(isSelected ? Color.primary : Color.primary.opacity(0.88))
@@ -311,6 +322,10 @@ private struct SessionCardItem: View {
         .accessibilityValue(replyStatus == .uncertain ? "待确认" : (replyStatus == .answering ? "回答中" : (replyStatus == .unread ? "回答已完成，未读" : "")))
         .onHover { isHovered = $0 }
         .contextMenu {
+            Button(action: onTogglePin) {
+                Label(isPinned ? "取消置顶" : "置顶", systemImage: isPinned ? "pin.slash" : "pin")
+            }
+            Divider()
             Button("重命名…") { onRename() }
             Button("复制标题") {
                 NSPasteboard.general.clearContents()

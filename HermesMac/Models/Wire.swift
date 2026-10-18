@@ -40,7 +40,7 @@ struct Profile: Identifiable, Equatable {
     let description: String
     init(_ json: JSON) { name = json["name"].string; displayName = json["display_name"].string.isEmpty ? name : json["display_name"].string; description = json["description"].string }
 }
-struct SessionSummary: Identifiable, Equatable {
+struct SessionSummary: Identifiable, Equatable, Codable {
     let id: String
     var title: String
     let preview: String

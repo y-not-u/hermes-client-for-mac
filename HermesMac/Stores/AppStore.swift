@@ -331,6 +331,34 @@ import AppKit
             await self.loadSessions(profile: profile, query: query)
         }
     }
+    func isSessionPinned(_ id: String, profile: String) -> Bool {
+        (local.state(service).pinnedSessions?[profile] ?? []).contains { $0.id == id }
+    }
+
+    func toggleSessionPin(_ row: SessionSummary, profile: String) {
+        local.update(service) { state in
+            var pins = state.pinnedSessions ?? [:]
+            if pins[profile, default: []].contains(where: { $0.id == row.id }) {
+                pins[profile]?.removeAll { $0.id == row.id }
+            } else {
+                pins[profile, default: []].insert(row, at: 0)
+            }
+            state.pinnedSessions = pins
+        }
+    }
+
+    /// Compose the display without changing the server's pagination order/count.
+    func displayedSessions(profile: String) -> [SessionSummary] {
+        let rows = sessions[profile] ?? []
+        let pins = local.state(service).pinnedSessions?[profile] ?? []
+        let pinnedIDs = Set(pins.map(\.id))
+        let visiblePins = pins.compactMap { pin -> SessionSummary? in
+            if let fresh = rows.first(where: { $0.id == pin.id }) { return fresh }
+            return search.isEmpty ? pin : nil
+        }
+        return visiblePins + rows.filter { !pinnedIDs.contains($0.id) }
+    }
+
     func loadSessions(profile: String, query: String = "", more: Bool = false) async {
         guard let client, connected, !profile.isEmpty else { return }
         let epoch = generation; let revision = UUID(); listRevision[profile] = revision; listLoading = true
@@ -347,6 +375,13 @@ import AppKit
             else {
                 let open = (sessions[profile] ?? []).filter { row in conversations.values.contains { $0.key.profile == profile && $0.key.storedID == row.id && ($0.generating || $0.messages.isEmpty) } && !rows.contains(where: { $0.id == row.id }) }
                 sessions[profile] = query.isEmpty ? open + rows : rows
+            }
+            local.update(service) { state in
+                guard let pins = state.pinnedSessions?[profile] else { return }
+                state.pinnedSessions?[profile] = pins.compactMap { pin in
+                    if rawRows.contains(where: { $0["id"].string == pin.id && $0["archived"].bool }) { return nil }
+                    return rows.first(where: { $0.id == pin.id }) ?? pin
+                }
             }
             listHasMore[profile] = rawRows.count == 40 && query.isEmpty
         } catch { guard epoch == generation else { return }; self.error = error.localizedDescription }
@@ -625,6 +660,11 @@ import AppKit
             _ = try await client.rest("/api/sessions/\(row.id)", method: "PATCH", body: .object(["title": .string(title), "profile": .string(profile)]))
             guard epoch == generation else { return }
             if let index = sessions[profile]?.firstIndex(where: { $0.id == row.id }) { sessions[profile]?[index].title = title }
+            local.update(service) { state in
+                if let index = state.pinnedSessions?[profile]?.firstIndex(where: { $0.id == row.id }) {
+                    state.pinnedSessions?[profile]?[index].title = title
+                }
+            }
         } catch { guard epoch == generation else { return }; self.error = error.localizedDescription }
     }
     func canRemoveSession(_ id: String, profile: String) -> Bool {
@@ -653,6 +693,7 @@ import AppKit
             routes = routes.filter { $0.value != key }
             if selectedProfile == profile && selectedSession == row.id { newSession() }
             local.update(expectedService) {
+                $0.pinnedSessions?[profile]?.removeAll { $0.id == row.id }
                 if $0.lastSession[profile] == row.id { $0.lastSession.removeValue(forKey: profile) }
                 if !archive { $0.drafts.removeValue(forKey: LocalState.draftKey(profile: profile, session: row.id)) }
             }

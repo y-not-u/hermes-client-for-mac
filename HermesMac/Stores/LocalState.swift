@@ -1,11 +1,14 @@
 import Foundation
+import Observation
 struct ServiceState: Codable, Equatable {
     var profileOrder: [String] = []
     var selectedProfile = ""
     var lastSession: [String: String] = [:]
     var drafts: [String: String] = [:]
+    // Optional so metadata written before pinning was introduced still decodes.
+    var pinnedSessions: [String: [SessionSummary]]?
 }
-@MainActor final class LocalState {
+@MainActor @Observable final class LocalState {
     private let defaults: UserDefaults
     private var services: [String: ServiceState] = [:]
     private static let storagePrefix = "serviceState.v2."

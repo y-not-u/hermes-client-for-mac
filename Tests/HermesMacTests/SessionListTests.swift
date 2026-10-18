@@ -3,6 +3,65 @@ import Observation
 @testable import HermesMac
 
 @MainActor final class SessionListTests: XCTestCase {
+    func testPinsPersistAndStayAboveNewerRowsWithoutChangingPagination() throws {
+        let name = "HermesPins-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = AppStore(local: LocalState(defaults: defaults))
+        let recent = SessionSummary(id: "recent", title: "Recent")
+        let old = SessionSummary(id: "old", title: "Old")
+        store.sessions["a"] = [recent, old]
+        let changed = expectation(description: "Pinning updates the visible list")
+        withObservationTracking { _ = store.displayedSessions(profile: "a") }
+            onChange: { changed.fulfill() }
+        store.toggleSessionPin(old, profile: "a")
+        wait(for: [changed], timeout: 1)
+        XCTAssertEqual(store.displayedSessions(profile: "a").map(\.id), ["old", "recent"])
+        XCTAssertEqual(store.sessions["a"], [recent, old])
+        XCTAssertFalse(store.isSessionPinned("old", profile: "b"))
+        let restored = AppStore(local: LocalState(defaults: defaults))
+        XCTAssertTrue(restored.isSessionPinned("old", profile: "a"))
+        // Pinned rows survive refresh/restart even outside the first server page.
+        restored.sessions["a"] = [recent]
+        XCTAssertEqual(restored.displayedSessions(profile: "a").map(\.id), ["old", "recent"])
+        restored.address = "http://another-service"
+        XCTAssertFalse(restored.isSessionPinned("old", profile: "a"))
+        restored.address = store.address
+        restored.toggleSessionPin(old, profile: "a")
+        XCTAssertEqual(restored.displayedSessions(profile: "a"), [recent])
+        XCTAssertFalse(AppStore(local: LocalState(defaults: defaults)).isSessionPinned("old", profile: "a"))
+    }
+
+    func testSearchOnlyPinsMatchingResultsAndUsesFreshSummaries() {
+        let name = "HermesPinSearch-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = AppStore(local: LocalState(defaults: defaults))
+        let old = SessionSummary(id: "old", title: "Old")
+        let other = SessionSummary(id: "other", title: "Other")
+        store.toggleSessionPin(old, profile: "a")
+        store.toggleSessionPin(other, profile: "a")
+        let fresh = SessionSummary(id: "old", title: "Renamed")
+        store.search = "Renamed"
+        store.sessions["a"] = [fresh]
+        XCTAssertEqual(store.displayedSessions(profile: "a"), [fresh])
+        store.search = ""
+        XCTAssertEqual(store.displayedSessions(profile: "a"), [other, fresh])
+        store.sessions["a"] = [fresh, other]
+        store.toggleSessionPin(old, profile: "a")
+        store.toggleSessionPin(other, profile: "a")
+        XCTAssertEqual(store.displayedSessions(profile: "a"), [fresh, other])
+    }
+
+    func testMetadataBeforePinningStillDecodes() throws {
+        let data = Data(#"{"profileOrder":["a"],"selectedProfile":"a","lastSession":{"a":"old"},"drafts":{"draft":"text"}}"#.utf8)
+        let state = try JSONDecoder().decode(ServiceState.self, from: data)
+        XCTAssertEqual(state.selectedProfile, "a")
+        XCTAssertEqual(state.lastSession["a"], "old")
+        XCTAssertEqual(state.drafts["draft"], "text")
+        XCTAssertNil(state.pinnedSessions)
+    }
+
     func testBackgroundRowsObserveIndependentReplyCompletionAndUncertainty() throws {
         let name = "HermesSessionList-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
