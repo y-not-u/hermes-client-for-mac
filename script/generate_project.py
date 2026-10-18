@@ -35,6 +35,8 @@ for kind in ['project','target']:
             settings += 'PRODUCT_NAME = HermesMac; PRODUCT_BUNDLE_IDENTIFIER = com.hermes.mac; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = HermesMac/Info.plist; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity"; CODE_SIGN_STYLE = Automatic; ENABLE_HARDENED_RUNTIME = YES; '
             if config == 'Debug':
                 settings = settings.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual; CODE_SIGN_IDENTITY = "HermesMac Local Development"; ENABLE_DEBUG_DYLIB = NO;')
+                settings = settings.replace('ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;', 'ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDev;')
+                settings = settings.replace('PRODUCT_NAME = HermesMac; PRODUCT_BUNDLE_IDENTIFIER = com.hermes.mac;', 'PRODUCT_NAME = HermesMac; PRODUCT_BUNDLE_IDENTIFIER = com.hermes.mac.dev; EXECUTABLE_NAME = HermesMacDev; INFOPLIST_KEY_CFBundleDisplayName = "Hermes Dev"; INFOPLIST_KEY_CFBundleName = "Hermes Dev";')
                 settings += 'SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)"; '
         settings += 'SWIFT_OPTIMIZATION_LEVEL = "'+('-Onone' if config == 'Debug' else '-O')+'";'
         obj(kind+config, f'isa = XCBuildConfiguration; name = {config}; buildSettings = {{ {settings} }};')

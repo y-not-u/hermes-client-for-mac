@@ -5,10 +5,40 @@ import OSLog
 @main struct HermesMacApp: App {
     @AppStorage(ChatTypography.key) private var fontSize = ChatTypography.defaultSize
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @State private var store = AppStore(onReplyCompleted: { _, profile, text in
-        ReplyNotifications.shared.replyCompleted(profile: profile, text: text)
-    })
+    @State private var store: AppStore
+    // SwiftUI may recreate the App value; the lock belongs to the process.
+    private static let instanceLock: SingleInstanceLock = {
+        #if DEBUG
+        let identifier = Bundle.main.bundleIdentifier ?? "com.hermes.mac.dev"
+        #else
+        let identifier = Bundle.main.bundleIdentifier ?? "com.hermes.mac"
+        #endif
+        do {
+            let lock = try SingleInstanceLock(identifier: identifier)
+            guard try lock.acquire() else {
+                if let existing = NSRunningApplication.runningApplications(withBundleIdentifier: identifier)
+                    .first(where: { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }) {
+                    // Opening the existing bundle also restores its closed main window.
+                    NSWorkspace.shared.open(existing.bundleURL ?? Bundle.main.bundleURL)
+                    existing.activate(options: [.activateAllWindows])
+                }
+                exit(0)
+            }
+            return lock
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "无法启动 Hermes"
+            alert.informativeText = "无法取得应用实例锁：\(error.localizedDescription)"
+            alert.runModal()
+            exit(1)
+        }
+    }()
+
     init() {
+        _ = Self.instanceLock
+        _store = State(initialValue: AppStore(onReplyCompleted: { _, profile, text in
+            ReplyNotifications.shared.replyCompleted(profile: profile, text: text)
+        }))
         #if DEBUG
         // Isolated UI acceptance: no real preferences or Keychain entries are read or changed.
         let arguments = ProcessInfo.processInfo.arguments
@@ -123,7 +153,7 @@ import OSLog
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+        if let url = Bundle.main.url(forResource: Bundle.main.object(forInfoDictionaryKey: "CFBundleIconName") as? String ?? "AppIcon", withExtension: "icns"),
            let icon = NSImage(contentsOf: url) {
             NSApp.applicationIconImage = icon
         }

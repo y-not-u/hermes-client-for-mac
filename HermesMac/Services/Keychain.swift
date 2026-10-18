@@ -62,7 +62,7 @@ enum Keychain {
     private static func helper(_ request: CredentialRequest) throws -> CredentialResponse? {
         guard let executable = Bundle.main.url(forAuxiliaryExecutable: "HermesCredentialHelper") else {
             // SwiftPM unit tests inject credentials and can use their own test items.
-            if Bundle.main.bundleIdentifier == "com.hermes.mac" {
+            if ["com.hermes.mac", "com.hermes.mac.dev"].contains(Bundle.main.bundleIdentifier ?? "") {
                 throw KeychainError(message: "应用缺少凭据组件，请通过构建脚本重新构建。")
             }
             return nil

@@ -10,7 +10,7 @@ Use full Xcode with the macOS SDK selected through `xcode-select`, plus Python 3
 
 - `./script/setup_local_signing.sh`: create the local signing certificate once; retain the certificate and private key across builds.
 - `./script/build_and_run.sh --build`: build the Debug app into `DerivedData/Build/Products/Debug/HermesMac.app`.
-- `./script/build_and_run.sh`: build and launch; the script closes any running HermesMac process.
+- `./script/build_and_run.sh`: build and launch; the script closes only the running HermesMacDev process, leaving Release running.
 - `./script/build_and_run.sh --debug`: build and start LLDB. Use `--logs` or `--telemetry` to inspect runtime logs.
 - `./script/test.sh`: start the aiohttp mock server and run SwiftPM tests; the first run installs the Python dependency in a temporary virtual environment.
 - `python3 script/generate_project.py`: regenerate the Xcode project after adding Swift files.

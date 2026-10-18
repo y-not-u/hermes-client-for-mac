@@ -75,7 +75,7 @@ HTTP 局域网直连不加密凭据和聊天。若网络不能充分信任，请
 
 ## 开发构建与 Keychain 授权
 
-本地自签名应用的 Keychain 分区权限会绑定二进制 `cdhash`，仅固定签名证书无法避免每次重新编译后的授权弹窗。Xcode 构建会将独立的 `HermesCredentialHelper` 放入应用，由它读写 Keychain；普通界面修改不会改变这个组件的身份。组件会验证调用方的 bundle identifier 和签名证书，凭据只通过进程管道传递，不写入文件或日志。
+本地自签名应用的 Keychain 分区权限会绑定二进制 `cdhash`，仅固定签名证书无法避免每次重新编译后的授权弹窗。Xcode 构建会将独立的 `HermesCredentialHelper` 放入应用，由它读写 Keychain；普通界面修改不会改变这个组件的身份。组件会验证调用方的 bundle identifier（正式版 `com.hermes.mac` 或开发版 `com.hermes.mac.dev`）和签名证书，凭据只通过进程管道传递，不写入文件或日志。
 
 第一次升级到凭据组件时，现有 Keychain 项目可能需要一次授权。系统弹窗中的申请方应为 `HermesCredentialHelper`，请选择“始终允许”。以后普通界面重编译不需要再次授权；修改凭据组件本身、更新编译工具链或更换签名证书仍可能需要重新授权。拒绝访问或钥匙串锁定时，应用会显示读取失败，保留已有凭据，解锁/授权后重新连接即可。
 

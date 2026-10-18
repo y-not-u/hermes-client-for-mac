@@ -15,7 +15,7 @@ func authorizedParent() -> Bool {
           let leaf = certificates.first else { return false }
     let fingerprint = Insecure.SHA1.hash(data: SecCertificateCopyData(leaf) as Data).map { String(format: "%02x", $0) }.joined()
     var requirement: SecRequirement?
-    let rule = "identifier \"com.hermes.mac\" and certificate leaf = H\"\(fingerprint)\""
+    let rule = "(identifier \"com.hermes.mac\" or identifier \"com.hermes.mac.dev\") and certificate leaf = H\"\(fingerprint)\""
     guard SecRequirementCreateWithString(rule as CFString, [], &requirement) == errSecSuccess else { return false }
     var parent: SecCode?
     let attributes = [kSecGuestAttributePid as String: NSNumber(value: getppid())]

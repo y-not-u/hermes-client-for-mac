@@ -137,3 +137,21 @@ HERMES_LIVE_SERVER='<自行填写已授权服务地址>' HERMES_LIVE_CHAT=1 swif
 尚未执行本轮真实服务或人工界面外观验收。建议人工检查：深浅色下聊天、会话列表和代码块滚动条；设置窗口背景；长草稿输入后退出重开；模型刷新期间切换会话或重连。滚动条不再强制隐藏系统私有 track layer，hover/拖动时的原生轨道外观由 AppKit 管理。
 
 本次未新增独立多窗口、离线历史数据库、Canvas/音视频协议或通用消息插件系统；这些属于功能演进。AppStore 仍承担会话和连接协调，本次完成模型目录领域的拆分而非整个应用架构重写。
+
+## 2026-10-16：开发版标识、图标与单实例
+
+- Debug 使用 `com.hermes.mac.dev` / `HermesMacDev`，显示名 Hermes Dev，图标为带橙色 DEV 角标的 AppIconDev；Release 保留 `com.hermes.mac` / HermesMac / AppIcon。凭据组件允许这两个标识，继续要求调用方与组件使用同一签名证书。
+- Info.plist 禁止同版多实例；应用在初始化 AppStore 前获取按用户、bundle ID 隔离的非阻塞文件锁，重复启动唤起原进程并退出。锁由内核随进程退出释放，不删除锁文件以避免竞争。启动脚本只重启开发版，普通启动不再使用 `open -n`。
+- `HERMES_TEST_VENV=/tmp/hermes-instance-py314 ./script/test.sh`：107 项，106 通过、1 项 opt-in live test 跳过、0 失败，包含同版锁竞争、两版锁共存、锁释放与获取失败回归。日志 `/tmp/hermes-single-instance-tests.log`。系统默认 Python 3.15 环境的 aiohttp 导入失败，本次使用独立 Python 3.14 环境验证。
+- `./script/build_and_run.sh --verify`：Debug 签名构建及启动通过。Release 使用现有本地证书完成构建；日志 `/tmp/hermes-single-instance-release.log`。检查两版实际 Info.plist 的标识、可执行文件名、图标名、单实例开关与图标资源均正确。
+- 同时运行 Debug 与 Release 后，分别直接启动第二个可执行文件以验证绕过 Launch Services 的情形：第二个进程均以 0 退出，原 PID 保持不变，两版各一个进程。Release 验收通过命令行临时将 serviceAddress 指向 loopback 关闭端口，不修改已保存的服务地址、不向真实模型发送消息。
+- Computer Use 检查开发版窗口可见；重复打开后主窗口可见且开发版 PID 不变。开发版图标原图已视觉检查，未单独验收系统通知中的图标。
+
+## 2026-10-18：长中文表格布局与流式更新
+
+- 表格缓存当前单元格的 Markdown 解析结果及尺寸，流式后缀更新复用已完成单元格，字号改变时重新测量。缓存仅保留当前表格内容。
+- 用具有明确行高的 VStack/HStack 替换横向 ScrollView 内的 Grid，并提供明确滚动区域高度，减少嵌套滚动时的自适应布局计算；保留横向滚动、文本选择及列对齐。
+- 新增回归覆盖缓存复用／字号失效、长中文换行与文字高度，以及聊天滚动区域内 24 次流式更新和宽度变化；后者本机约 0.13 秒。这是自动布局回归用时，未测量真实会话滚动帧率。
+- `HERMES_TEST_VENV=/tmp/hermes-instance-py314 ./script/test.sh`：110 项，0 失败，1 项 opt-in live test 跳过。日志 `/tmp/hermes-table-full-tests.log`。默认 Python 环境的 aiohttp 无法导入 web，沿用已存在的 Python 3.14 测试环境。
+- `./script/build_and_run.sh --build`：Debug 签名构建成功。`git diff --check` 通过。
+- 尚未人工验收截图中原始会话的滚动体验；建议在开发版复查该表格的横向／纵向滚动、流式生成、文本选择及字号调整。
