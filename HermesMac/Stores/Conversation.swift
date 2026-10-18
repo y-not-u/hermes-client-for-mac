@@ -27,6 +27,9 @@ import Observation
     var approvals: [Approval] = []
     var submittingApprovals: Set<String> = []
     var approvalErrors: [String: String] = [:]
+    var clarifyRequests: [ClarifyRequest] = []
+    var submittingClarify: Set<String> = []
+    var clarifyErrors: [String: String] = [:]
     var generating = false
     var uncertain = false
     var queryingStatus = false
@@ -83,6 +86,26 @@ import Observation
         for frame in json["open_requests"].array where frame["method"].string == "approval" {
             approvals.append(Approval(id: frame["id"].string, params: frame["params"]))
         }
+        // A reconnect replay re-delivers unanswered clarify requests the same way; keep any
+        // answer the user already staged for the same request id.
+        let stagedClarify = clarifyRequests
+        var replayedClarify: [ClarifyRequest] = []
+        for frame in json["open_requests"].array where frame["method"].string == "clarify" {
+            guard let replayed = ClarifyRequest(frame) else { continue }
+            if let existing = stagedClarify.first(where: { $0.id == replayed.id }), existing.questions == replayed.questions {
+                replayedClarify.append(replayed.mergingStaged(existing))
+            } else {
+                replayedClarify.append(replayed)
+            }
+        }
+        // `open_requests` is authoritative when the snapshot carries it: a clarify absent from the
+        // list was answered or withdrawn, so its card must go. A metadata-only snapshot that omits
+        // the field leaves the cards on screen untouched.
+        if json["open_requests"] == .null { replayedClarify = stagedClarify }
+        clarifyRequests = replayedClarify
+        let liveClarify = Set(clarifyRequests.map(\.id))
+        submittingClarify.formIntersection(liveClarify)
+        clarifyErrors = clarifyErrors.filter { liveClarify.contains($0.key) }
         error = inflight["error"].string.isEmpty ? nil : inflight["error"].string
         if wasUncertain, let sent = previousMessages.last(where: { $0.role == "user" }), !messages.contains(where: { $0.role == "user" && $0.text == sent.text }) {
             messages = previousMessages
@@ -163,7 +186,7 @@ import Observation
                 }
             }
             streamID = nil; activityID = nil; generating = false; uncertain = false; unread = !visible
-            approvals = []; error = payload["error"].string.isEmpty ? nil : payload["error"].string
+            approvals = []; clarifyRequests = []; submittingClarify = []; clarifyErrors = [:]; error = payload["error"].string.isEmpty ? nil : payload["error"].string
         case "error": error = payload["message"].string; generating = false
         case "tool.start":
             let id = payload["tool_id"].string
@@ -188,7 +211,14 @@ import Observation
                     break
                 }
             }
-        case "request.cancel": approvals.removeAll { $0.id == payload["id"].string }
+        case "request.cancel":
+            // The server withdraws one open request (`payload={id, method, reason}`); match on the id
+            // so a clarify cancel never tears down an approval card (and vice versa).
+            let id = payload["id"].string
+            approvals.removeAll { $0.id == id }
+            clarifyRequests.removeAll { $0.id == id }
+            submittingClarify.remove(id)
+            clarifyErrors.removeValue(forKey: id)
         default: break
         }
     }

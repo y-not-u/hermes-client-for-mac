@@ -65,6 +65,7 @@ import AppKit
             guard let c = conversations[key], key != currentKey,
                   !c.generating, !c.uncertain, !c.loading, !c.queryingStatus, !c.unread,
                   c.recoverableMessageID == nil, c.approvals.isEmpty, c.submittingApprovals.isEmpty,
+                  c.clarifyRequests.isEmpty, c.submittingClarify.isEmpty,
                   !sendingSessions.contains(key), !modelSwitching.contains(key.profile),
                   !sessionMutations.contains(key), modelConfirmation?.key != key,
                   !modelLoading.contains(ModelPickerContext(service: key.service, profile: key.profile, sessionID: key.storedID)) else { continue }
@@ -185,7 +186,7 @@ import AppKit
         creatingSessions.values.contains(profile) || sendingSessions.contains { $0.profile == profile }
         || conversations.values.contains { $0.key.profile == profile && ($0.generating || $0.uncertain) }
     }
-    func profileApproval(_ profile: String) -> Bool { conversations.values.contains { $0.key.profile == profile && !$0.approvals.isEmpty } }
+    func profileApproval(_ profile: String) -> Bool { conversations.values.contains { $0.key.profile == profile && (!$0.approvals.isEmpty || !$0.clarifyRequests.isEmpty) } }
     func profileUnread(_ profile: String) -> Bool { conversations.values.contains { $0.key.profile == profile && $0.unread } }
     private func persistDraft() {
         guard !selectedProfile.isEmpty else { return }
@@ -276,7 +277,7 @@ import AppKit
         profiles = values.sorted { (order.firstIndex(of: $0.name) ?? Int.max, $0.name) < (order.firstIndex(of: $1.name) ?? Int.max, $1.name) }
         local.update(service) { $0.profileOrder = profiles.map(\.name) }
         let names = Set(profiles.map(\.name))
-        for c in conversations.values where !names.contains(c.key.profile) { c.generating = false; c.uncertain = false; c.readOnlyReason = "此 profile 已被删除"; c.approvals = [] }
+        for c in conversations.values where !names.contains(c.key.profile) { c.generating = false; c.uncertain = false; c.readOnlyReason = "此 profile 已被删除"; c.approvals = []; c.clarifyRequests = [] }
     }
     private func installCallbacks(_ client: HermesClient, epoch: UUID) {
         client.onFrame = { [weak self] frame in
@@ -309,7 +310,7 @@ import AppKit
         navigation = UUID(); selectedProfile = profile; selectedSession = local.state(service).lastSession[profile]; search = ""
         draft = local.state(service).drafts[LocalState.draftKey(profile: profile, session: selectedSession)] ?? ""
         local.update(service) { $0.selectedProfile = profile }
-        if let pending = conversations.values.first(where: { $0.key.profile == profile && !$0.approvals.isEmpty }) { selectedSession = pending.key.storedID; restoreDraft() }
+        if let pending = conversations.values.first(where: { $0.key.profile == profile && (!$0.approvals.isEmpty || !$0.clarifyRequests.isEmpty) }) { selectedSession = pending.key.storedID; restoreDraft() }
         await botScreen.configure(client: client, profile: profile, connected: connected)
         await loadSessions(profile: profile)
         if let selectedSession { await openSession(selectedSession, profile: profile) }
@@ -439,12 +440,12 @@ import AppKit
             c.snapshot(snapshot, history: history)
             if let historyError, c.error == nil { c.error = historyError }
             bind(c)
-            for request in snapshot["open_requests"].array where request["method"].string != "approval" {
+            for request in snapshot["open_requests"].array where request["method"].string != "approval" && request["method"].string != "clarify" {
                 try? await client.respond(id: request["id"].string)
             }
         } catch {
             guard epoch == generation else { return }
-            c.runtimeID = nil; c.generating = false; c.uncertain = false; c.approvals = []
+            c.runtimeID = nil; c.generating = false; c.uncertain = false; c.approvals = []; c.clarifyRequests = []
             c.readOnlyReason = "历史暂无法恢复，当前为只读：\(error.localizedDescription)"
             if c.messages.isEmpty, let history { c.messages = history }
             if let historyError { c.error = historyError }
@@ -654,6 +655,80 @@ import AppKit
             c.approvalErrors[approval.id] = "审批提交失败：\(error.localizedDescription)"
         }
     }
+    /// Stage a picked choice for one question. Multi-select questions accumulate; single-select
+    /// questions replace the previous pick. Picking a choice clears the "Other" text draft.
+    func selectClarifyChoice(_ request: ClarifyRequest, conversation c: Conversation, qid: String, choice: String) {
+        guard let index = c.clarifyRequests.firstIndex(where: { $0.id == request.id }),
+              !c.submittingClarify.contains(request.id), c.clarifyRequests[index].isLocked(qid) == false else { return }
+        var updated = c.clarifyRequests[index]
+        updated.select(choice, for: qid)
+        c.clarifyErrors.removeValue(forKey: request.id)
+        c.clarifyRequests[index] = updated
+    }
+    /// Switch a question into free-text capture (an open-ended question, or the "Other" row).
+    func clarifyTyping(_ request: ClarifyRequest, conversation c: Conversation, qid: String, typing: Bool) {
+        guard let index = c.clarifyRequests.firstIndex(where: { $0.id == request.id }), !c.clarifyRequests[index].isLocked(qid) else { return }
+        var updated = c.clarifyRequests[index]
+        if typing {
+            updated.typingQID = qid
+            updated.selectedChoices[qid] = nil
+        } else if updated.questions.first(where: { $0.qid == qid })?.isOpenEnded != true {
+            updated.typingQID = nil
+        }
+        c.clarifyRequests[index] = updated
+    }
+    func editClarifyDraft(_ request: ClarifyRequest, conversation c: Conversation, qid: String, text: String) {
+        guard let index = c.clarifyRequests.firstIndex(where: { $0.id == request.id }), !c.clarifyRequests[index].isLocked(qid) else { return }
+        var updated = c.clarifyRequests[index]
+        updated.drafts[qid] = text
+        c.clarifyRequests[index] = updated
+    }
+    /// Send the staged answers. The server resolves the waiting tool as soon as the last answer
+    /// arrives, so the card is removed on success and kept with an error otherwise.
+    func submitClarify(_ request: ClarifyRequest, conversation c: Conversation) async {
+        guard let client, c.key.service == client.service, conversations[c.key] === c,
+              c.clarifyRequests.contains(where: { $0.id == request.id }), !c.uncertain, connected,
+              !c.submittingClarify.contains(request.id) else { return }
+        guard let index = c.clarifyRequests.firstIndex(where: { $0.id == request.id }) else { return }
+        guard c.clarifyRequests[index].isComplete else {
+            c.clarifyErrors[request.id] = "还有问题没有回答"
+            return
+        }
+        let epoch = generation
+        c.submittingClarify.insert(request.id)
+        c.clarifyErrors.removeValue(forKey: request.id)
+        defer { c.submittingClarify.remove(request.id); pruneConversationCache() }
+        do {
+            let result = c.clarifyRequests[index].result()
+            try await client.respond(id: request.id, result: .object(["answers": .object(result), "outcome": .string("submitted")]))
+            guard epoch == generation else { return }
+            c.clarifyRequests.removeAll { $0.id == request.id }
+            c.clarifyErrors.removeValue(forKey: request.id)
+        } catch {
+            guard epoch == generation else { return }
+            c.clarifyErrors[request.id] = "澄清回答提交失败：\(error.localizedDescription)"
+        }
+    }
+    /// Decline every open question: the tool reports them as skipped and the turn continues.
+    func cancelClarify(_ request: ClarifyRequest, conversation c: Conversation) async {
+        guard let client, c.key.service == client.service, conversations[c.key] === c,
+              c.clarifyRequests.contains(where: { $0.id == request.id }),
+              !c.submittingClarify.contains(request.id) else { return }
+        let epoch = generation
+        c.submittingClarify.insert(request.id)
+        c.clarifyErrors.removeValue(forKey: request.id)
+        defer { c.submittingClarify.remove(request.id); pruneConversationCache() }
+        do {
+            // An empty result is "cancel all" for the server's clarify bridge (`_clarify_block`),
+            // distinct from the -32601 a client sends when it has no handler at all.
+            try await client.respond(id: request.id, result: .object([:]))
+            guard epoch == generation else { return }
+            c.clarifyRequests.removeAll { $0.id == request.id }
+        } catch {
+            guard epoch == generation else { return }
+            c.clarifyErrors[request.id] = "无法取消澄清请求：\(error.localizedDescription)"
+        }
+    }
     func rename(_ row: SessionSummary, to title: String, profile owner: String? = nil, service expectedService: String? = nil) async {
         guard expectedService == nil || expectedService == service else { return }
         guard let client, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -727,6 +802,17 @@ import AppKit
         if frame["method"].string == "event" { applyEvent(type: params["type"].string, payload: params["payload"], to: c) }
         else if frame["method"].string == "approval" {
             if !c.approvals.contains(where: { $0.id == frame["id"].string }) { c.approvals.append(Approval(id: frame["id"].string, params: params)) }
+        } else if frame["method"].string == "clarify" {
+            guard let request = ClarifyRequest(frame) else {
+                let requestID = frame["id"].string; let client = client
+                Task { try? await client?.respond(id: requestID) }
+                return
+            }
+            // A replayed frame for a request already on screen keeps the staged answer.
+            if let index = c.clarifyRequests.firstIndex(where: { $0.id == request.id }) {
+                guard c.clarifyRequests[index].questions != request.questions else { return }
+                c.clarifyRequests[index] = request
+            } else { c.clarifyRequests.append(request) }
         } else if !frame["id"].string.isEmpty {
             let requestID = frame["id"].string; let client = client
             Task { try? await client?.respond(id: requestID) }

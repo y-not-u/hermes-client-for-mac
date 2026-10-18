@@ -316,6 +316,10 @@ struct ChatView: View {
                                 ApprovalCard(approval: approval, conversation: c, store: store)
                             }
 
+                            ForEach(c.clarifyRequests) { request in
+                                ClarifyCard(request: request, conversation: c, store: store)
+                            }
+
                             if let error = c.error, !c.uncertain {
                                 HStack(spacing: 8) {
                                     Image(systemName: "exclamationmark.circle.fill")
@@ -470,6 +474,9 @@ struct ChatView: View {
                         if isAtBottom && !running && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
                     }
                     .onChange(of: c.approvals.count) { _, _ in
+                        if isAtBottom && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
+                    }
+                    .onChange(of: c.clarifyRequests.count) { _, _ in
                         if isAtBottom && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
                     }
                 }

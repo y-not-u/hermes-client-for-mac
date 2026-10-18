@@ -39,6 +39,9 @@
 | `config.set` | `profile`, 运行时 `session_id`, `key=model`, `value=<model> --provider <slug> --session`；收到 `confirm_required` 时展示服务端提示，用户确认后才额外传 `confirm_expensive_model=true` |
 | `session.interrupt` | `profile`, 运行时 `session_id`，只停止目标任务 |
 | 服务端 `approval` 请求 | 卡片显示服务给出的选项；带 `params.request_id` 时调用 `approval.respond(session_id, request_id, choice)`，收到 `resolved > 0` 后移除卡片；无队列 ID 的旧请求使用原 JSON-RPC ID 和 `result.choice` 响应 |
+| 服务端 `clarify` 请求 | `params.questions` 为 1–5 个 `{qid, question, choices?, multi_select}`。卡片按题作答；单选/多选回 `choices` 原文，开放题与「其他」回自由文本，多选额外把答案编成 JSON 数组字符串。提交用原 JSON-RPC ID 回 `result={answers:{qid: string}, outcome:"submitted"}`；「取消本轮提问」回 `result={}`（服务端按 cancel-all 处理），不回 `-32601` |
+
+`clarify` 与 `approval` 同属服务端→客户端阻塞请求族，回答前 agent 线程停在同一处等待。服务端只有在连接声明过 `client.capabilities {server_requests: true}` 时才发送这类请求，未声明会直接跳过并让工具拿到 `outcome=undelivered`；因此客户端不得在未实现对应方法时声明该能力。请求的 id 形如 `srq-<12 hex>`，与客户端自造的 `mac-` 前缀 ID 不冲突。撤回走全局 `event` + `params.type=request.cancel`，`payload={id, method, reason}`，按 id 移除对应卡片（审批与澄清互不影响）。重连时 `session.resume` 的 `open_requests` 会重新投递仍未回答的请求，快照携带该字段时以它为准：不在其中的卡片视为已被回答或撤回。`choices` 里首项带 `(Recommended)` 后缀，属于展示标记，回包前需去掉，否则会污染 `user_response`。多选答案在工具侧由 JSON 数组字符串解码，跳过某题发 `null`。服务端另有 `clarify.lock`（逐题加锁，`{request_id, question_id, answer}` → `{status, remaining}`），本客户端不做提前加锁，只在最后一次性提交整组答案。
 
 源码参考中的 `idempotency_key`（create）和 `inline_images`（resume）是可选扩展参数，但实测 Hermes 0.21.5 严格拒绝这些额外 RPC 参数。客户端统一省略它们，保持同一套请求；没有失败后切换协议或自动再次 create 的逻辑，也不依赖幂等键进行重试。
 

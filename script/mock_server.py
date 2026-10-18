@@ -38,6 +38,9 @@ class Fixture:
         self.model_confirm = False
         self.model_error = False
         self.model_delay = 0
+        self.clarify_questions = None
+        self.clarify_open = {}
+        self.cancels = []
 
     async def control(self, request):
         body = await request.json()
@@ -68,6 +71,29 @@ class Fixture:
             for key in ('model_confirm', 'model_error', 'model_delay'):
                 if key in body:
                     setattr(self, key, body[key])
+            if 'clarify_questions' in body:
+                self.clarify_questions = body['clarify_questions']
+        elif action == 'clarify':
+            # Deliver one server→client clarify request the way tui_gateway's server_requests.send does.
+            stored = body['stored_id']
+            session = self.sessions[stored]
+            request_id = body.get('id', 'srq-%d' % (len(self.cancels) + len(self.clarify_open) + 1))
+            self.clarify_open[request_id] = {'stored_id': stored, 'questions': body['questions']}
+            frame = {'jsonrpc': '2.0', 'id': request_id, 'method': 'clarify',
+                     'params': {'session_id': session['session_id'], 'questions': body['questions']}}
+            if body.get('answers'):
+                frame['params']['answers'] = body['answers']
+            for ws in list(self.sockets):
+                await ws.send_json(frame)
+        elif action == 'cancel_request':
+            stored = body['stored_id']
+            session = self.sessions[stored]
+            self.clarify_open.pop(body['id'], None)
+            self.cancels.append({'id': body['id'], 'reason': body.get('reason', 'interrupted')})
+            for ws in list(self.sockets):
+                await ws.send_json({'jsonrpc': '2.0', 'method': 'event', 'params': {
+                    'session_id': session['session_id'], 'type': 'request.cancel',
+                    'payload': {'id': body['id'], 'method': 'clarify', 'reason': body.get('reason', 'interrupted')}}})
         elif action == 'drop':
             for ws in list(self.sockets):
                 await ws.close()
@@ -92,7 +118,7 @@ class Fixture:
             for ws in list(self.sockets):
                 await ws.send_json(frame)
         return web.json_response({'requests': self.requests, 'responses': self.responses, 'history_reads': self.history_reads, 'session_reads': self.session_reads, 'session_writes': self.session_writes,
-            'refreshes': self.refreshes, 'tickets': self.tickets, **self.display.report()})
+            'refreshes': self.refreshes, 'tickets': self.tickets, 'cancels': self.cancels, 'clarify_open': list(self.clarify_open), **self.display.report()})
 
     async def rest(self, request):
         path = request.path
@@ -163,6 +189,8 @@ class Fixture:
         method = frame.get('method')
         if not method:
             self.responses.append(frame)
+            if isinstance(frame.get('id'), str) and frame['id'] in self.clarify_open:
+                self.clarify_open.pop(frame['id'], None)
             return
         params = frame.get('params', {})
         self.requests.append({'method': method, 'params': params})
@@ -216,6 +244,13 @@ class Fixture:
                     'session_id': session['session_id'], 'type': 'message.complete',
                     'payload': {'text': 'finished during resume'}}})
             result = dict(self.sessions[sid])
+            if self.clarify_questions:
+                # An unanswered clarify survives a resume as an open server request.
+                self.clarify_questions, questions = None, self.clarify_questions
+                request_id = 'srq-resume'
+                self.clarify_open[request_id] = {'stored_id': sid, 'questions': questions}
+                result.setdefault('open_requests', []).append({'id': request_id, 'method': 'clarify',
+                    'params': {'session_id': result['session_id'], 'questions': questions}})
             if params.get('omit_messages'):
                 result['message_count'] = len(result['messages'])
                 result['messages'] = []

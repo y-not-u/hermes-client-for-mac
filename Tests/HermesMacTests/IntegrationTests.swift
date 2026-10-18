@@ -691,6 +691,108 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertTrue(stats["responses"].array.isEmpty)
     }
 
+    private func clarifyQuestions() -> JSON {
+        .array([
+            .object(["qid": .string("q0"), "question": .string("Deploy to which env?"),
+                     "choices": .array([.string("staging (Recommended)"), .string("prod")]),
+                     "multi_select": .bool(false)]),
+            .object(["qid": .string("q1"), "question": .string("Which targets?"),
+                     "choices": .array([.string("api (Recommended)"), .string("web")]),
+                     "multi_select": .bool(true)]),
+            .object(["qid": .string("q2"), "question": .string("Anything else?"), "choices": .null,
+                     "multi_select": .bool(false)])
+        ])
+    }
+    private func deliverClarify(_ stored: String, id: String = "srq-clarify", answers: JSON = .null) async throws {
+        var body: [String: JSON] = ["action": .string("clarify"), "stored_id": .string(stored),
+                                    "id": .string(id), "questions": clarifyQuestions()]
+        if answers != .null { body["answers"] = answers }
+        _ = try await fixture(body)
+    }
+
+    func testClarifyRequestIsAnsweredAndCleared() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "question"
+        await store.send()
+        let conversation = try XCTUnwrap(store.current)
+        try await deliverClarify(conversation.key.storedID)
+        try await eventually { conversation.clarifyRequests.count == 1 }
+
+        let request = try XCTUnwrap(conversation.clarifyRequests.first)
+        XCTAssertEqual(request.id, "srq-clarify")
+        XCTAssertEqual(request.questions.map(\.qid), ["q0", "q1", "q2"])
+        XCTAssertFalse(request.isComplete)
+        // An incomplete card never submits.
+        await store.submitClarify(request, conversation: conversation)
+        XCTAssertEqual(conversation.clarifyErrors[request.id], "还有问题没有回答")
+        XCTAssertEqual(conversation.clarifyRequests.map(\.id), ["srq-clarify"])
+
+        // The server marks the first choice "(Recommended)"; picking it must strip the label.
+        store.selectClarifyChoice(request, conversation: conversation, qid: "q0", choice: "staging (Recommended)")
+        store.selectClarifyChoice(request, conversation: conversation, qid: "q1", choice: "web")
+        store.selectClarifyChoice(request, conversation: conversation, qid: "q1", choice: "api (Recommended)")
+        store.editClarifyDraft(request, conversation: conversation, qid: "q2", text: "先备份")
+        XCTAssertTrue(conversation.clarifyRequests[0].isComplete)
+        XCTAssertEqual(conversation.clarifyRequests[0].choices(for: "q1"), ["web", "api (Recommended)"])
+
+        await store.submitClarify(conversation.clarifyRequests[0], conversation: conversation)
+        XCTAssertTrue(conversation.clarifyRequests.isEmpty)
+        XCTAssertNil(conversation.clarifyErrors[request.id])
+        XCTAssertTrue(conversation.submittingClarify.isEmpty)
+
+        let stats = try await fixture(["action": .string("stats")])
+        let answers = try XCTUnwrap(stats["responses"].array.first { $0["id"].string == "srq-clarify" })
+        XCTAssertEqual(answers["result"]["outcome"].string, "submitted")
+        XCTAssertEqual(answers["result"]["answers"]["q0"].string, "staging")
+        // Multi-select answers travel as a JSON array string.
+        XCTAssertEqual(answers["result"]["answers"]["q1"].string, "[\"web\",\"api\"]")
+        XCTAssertEqual(answers["result"]["answers"]["q2"].string, "先备份")
+        XCTAssertTrue(stats["clarify_open"].array.isEmpty)
+    }
+
+    func testClarifyCancelSendsEmptyResultAndWithdrawnRequestRemovesCard() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "question"
+        await store.send()
+        let conversation = try XCTUnwrap(store.current)
+        try await deliverClarify(conversation.key.storedID, id: "srq-cancel")
+        try await eventually { conversation.clarifyRequests.count == 1 }
+        let request = try XCTUnwrap(conversation.clarifyRequests.first)
+        await store.cancelClarify(request, conversation: conversation)
+        XCTAssertTrue(conversation.clarifyRequests.isEmpty)
+        let stats = try await fixture(["action": .string("stats")])
+        let response = try XCTUnwrap(stats["responses"].array.first { $0["id"].string == "srq-cancel" })
+        // An empty result frame is "cancel all" for the server's clarify bridge.
+        XCTAssertEqual(response["result"], .object([:]))
+
+        // A server-side withdrawal (timeout / interrupt) tears the card down through request.cancel.
+        try await deliverClarify(conversation.key.storedID, id: "srq-withdrawn")
+        try await eventually { conversation.clarifyRequests.count == 1 }
+        _ = try await fixture(["action": .string("cancel_request"), "stored_id": .string(conversation.key.storedID),
+                               "id": .string("srq-withdrawn"), "reason": .string("timeout")])
+        try await eventually { conversation.clarifyRequests.isEmpty }
+        XCTAssertTrue(conversation.clarifyRequests.isEmpty)
+    }
+
+    func testResumeReplaysOpenClarifyRequest() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "question"
+        await store.send()
+        let conversation = try XCTUnwrap(store.current)
+        _ = try await fixture(["action": .string("configure"), "clarify_questions": clarifyQuestions()])
+        // A reconnect drops the runtime binding, so reopening the session resumes it and the
+        // server replays the unanswered request through `open_requests`.
+        conversation.runtimeID = nil
+        await store.openSession(conversation.key.storedID)
+        try await eventually { !conversation.clarifyRequests.isEmpty }
+        let request = try XCTUnwrap(conversation.clarifyRequests.first)
+        XCTAssertEqual(request.id, "srq-resume")
+        XCTAssertEqual(request.questions.map(\.qid), ["q0", "q1", "q2"])
+    }
+
     func testLateCreateResponseRemainsOwnedByOriginalProfile() async throws {
         let (store, client, defaults, name) = try await prepare()
         defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
