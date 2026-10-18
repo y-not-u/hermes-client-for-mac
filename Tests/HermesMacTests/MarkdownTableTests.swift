@@ -69,6 +69,74 @@ import AppKit
         }
     }
 
+    func testStreamedTableReusesCompletedCellsAndInvalidatesTypography() {
+        let cache = MarkdownTableLayoutCache()
+        let original = MarkdownTable(headers: ["景点", "我的取舍"], alignments: [.leading, .leading], rows: [["大峡谷", "**主角**，优先留给晴天。"], ["七星寨", "正在生成"]])
+        let first = cache.layout(for: original, fontSize: 13.5)
+        let repeated = cache.layout(for: original, fontSize: 13.5)
+        XCTAssertTrue(first.cells[1][1] === repeated.cells[1][1])
+        let streamed = MarkdownTable(headers: original.headers, alignments: original.alignments, rows: [original.rows[0], ["七星寨", "正在生成更多文字"]])
+        let updated = cache.layout(for: streamed, fontSize: 13.5)
+        XCTAssertTrue(first.cells[0][0] === updated.cells[0][0])
+        XCTAssertTrue(first.cells[1][1] === updated.cells[1][1])
+        XCTAssertFalse(first.cells[2][1] === updated.cells[2][1])
+        let enlarged = cache.layout(for: streamed, fontSize: 22)
+        XCTAssertFalse(updated.cells[1][1] === enlarged.cells[1][1])
+        XCTAssertGreaterThan(enlarged.height, updated.height)
+    }
+
+    func testLongChineseTableHasBoundedHeightAndUnclippedCells() {
+        _ = NSApplication.shared
+        let source = String(repeating: "**主角，优先留给晴天。** 索道上、扶梯下，中间仍有不少步行和台阶，单独留一天最稳妥。", count: 3)
+        let table = MarkdownTable(headers: ["景点", "我的取舍"], alignments: [.leading, .leading], rows: (0..<12).map { ["景点 \($0)", source] })
+        let cache = MarkdownTableLayoutCache()
+        for fontSize: CGFloat in [13.5, 22, 28] {
+            let layout = cache.layout(for: table, fontSize: fontSize)
+            for column in table.headers.indices {
+                let cell = NSHostingView(rootView: Text(layout.cells[1][column].content)
+                    .font(.system(size: fontSize))
+                    .frame(width: layout.widths[column])
+                    .fixedSize(horizontal: false, vertical: true))
+                XCTAssertLessThanOrEqual(cell.fittingSize.height + 16, layout.rowHeights[1], "Explicit row height must fit wrapped text")
+            }
+            let hosting = NSHostingView(rootView: MarkdownTableView(table: table, fontSize: fontSize))
+            for width: CGFloat in [240, 900, 320] {
+                hosting.frame = NSRect(x: 0, y: 0, width: width, height: 600)
+                hosting.layoutSubtreeIfNeeded()
+                XCTAssertEqual(hosting.fittingSize.height, layout.height + 4, accuracy: 1)
+            }
+        }
+    }
+
+    func testLongTableInScrollingTranscriptSettlesDuringStreamingAndResize() {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 600), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let rows = (0..<12).map { "| 景点 \($0) | **主角，优先留给晴天。** 索道上、扶梯下，中间仍有不少步行和台阶，单独留一天最稳妥。 |" }.joined(separator: "\n")
+        let prefix = "| 景点 | 我的取舍 |\n|---|---|\n" + rows + "\n| 备选 | "
+        func transcript(_ suffix: String) -> some View {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("前文")
+                    MarkdownView(text: prefix + suffix)
+                    Text("后文").id("bottom")
+                }
+                .padding(24)
+            }
+        }
+        let hosting = NSHostingView(rootView: transcript(""))
+        window.contentView = hosting
+        let start = Date()
+        for index in 0..<24 {
+            hosting.frame = NSRect(x: 0, y: 0, width: index.isMultiple(of: 2) ? 320 : 900, height: 600)
+            hosting.rootView = transcript(String(repeating: "继续生成中文内容", count: index))
+            hosting.layoutSubtreeIfNeeded()
+            XCTAssertTrue(hosting.fittingSize.height.isFinite)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(start), 8, "Nested table layout must settle during streaming and resize")
+    }
+
     func testUnchangedCodeRetainsSelectionAndRespondsToTypographyChanges() async throws {
         let suite = "HermesMarkdown-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
