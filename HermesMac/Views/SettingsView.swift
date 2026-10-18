@@ -249,7 +249,7 @@ struct SettingsView: View {
                                 loginTask?.cancel()
                                 login?.cancel()
                             }
-                            .controlSize(.small)
+                            .controlSize(.regular)
                         } else {
                             HStack(spacing: 6) {
                                 Button(hasSavedCredentials ? "重新登录" : "在浏览器中登录") {
@@ -264,6 +264,7 @@ struct SettingsView: View {
                                     }
                                     .controlSize(.regular)
                                     .foregroundStyle(.red)
+                                    .disabled(busy)
                                     .help("移除该服务在钥匙串中保存的登录凭据")
                                 }
                             }
