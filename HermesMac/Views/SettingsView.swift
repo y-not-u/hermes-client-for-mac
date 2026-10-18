@@ -156,14 +156,6 @@ struct SettingsView: View {
                 }
 
                 Spacer()
-
-                if store.connected {
-                    Button("重新连接") {
-                        reconnect()
-                    }
-                    .controlSize(.small)
-                    .disabled(busy)
-                }
             }
             .padding(12)
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
