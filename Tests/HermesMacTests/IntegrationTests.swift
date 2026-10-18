@@ -1014,4 +1014,46 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertFalse(a.generating)
     }
 
+    func testModelSettingsMainAndFallbackChain() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        await store.loadModelSettings()
+        XCTAssertEqual(store.modelSettingsCatalog?.model, "default-a")
+        XCTAssertEqual(store.modelSettingsCatalog?.provider, "fixture")
+        XCTAssertTrue(store.fallbackChain.isEmpty)
+        XCTAssertNil(store.modelSettingsError)
+
+        await store.setMainModel(ModelChoice(provider: "other", model: "new-model"))
+        XCTAssertEqual(store.modelSettingsCatalog?.model, "new-model")
+        XCTAssertEqual(store.modelSettingsCatalog?.provider, "other")
+        XCTAssertNil(store.modelSettingsError)
+
+        let first = ModelChoice(provider: "fixture", model: "default-a")
+        let second = ModelChoice(provider: "other", model: "new-model")
+        await store.addFallback(first)
+        await store.addFallback(second)
+        XCTAssertEqual(store.fallbackChain, [first, second])
+
+        await store.loadModelSettings()
+        XCTAssertEqual(store.modelSettingsCatalog?.model, "new-model")
+        XCTAssertEqual(store.fallbackChain, [first, second])
+
+        await store.moveFallback(from: 0, to: 1)
+        XCTAssertEqual(store.fallbackChain, [second, first])
+        await store.removeFallback(at: 0)
+        XCTAssertEqual(store.fallbackChain, [first])
+        await store.loadModelSettings()
+        XCTAssertEqual(store.fallbackChain, [first])
+
+        await store.setFallbackChain([])
+        XCTAssertTrue(store.fallbackChain.isEmpty)
+        await store.loadModelSettings()
+        XCTAssertTrue(store.fallbackChain.isEmpty)
+
+        // Main model set was written to mock server and read back via model.options
+        await store.loadModelSettings()
+        XCTAssertEqual(store.modelSettingsCatalog?.model, "new-model")
+        XCTAssertEqual(store.modelSettingsCatalog?.provider, "other")
+    }
+
 }

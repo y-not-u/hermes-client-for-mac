@@ -2,6 +2,7 @@ import SwiftUI
 
 enum SettingsTab: String, CaseIterable, Identifiable {
     case connection = "服务连接"
+    case model = "模型设置"
     case appearance = "偏好与显示"
 
     var id: String { rawValue }
@@ -9,6 +10,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .connection: return "network"
+        case .model: return "cpu"
         case .appearance: return "textformat"
         }
     }
@@ -80,6 +82,8 @@ struct SettingsView: View {
                     switch selectedTab {
                     case .connection:
                         connectionTab
+                    case .model:
+                        modelTab
                     case .appearance:
                         appearanceTab
                     }
@@ -390,6 +394,180 @@ struct SettingsView: View {
                         .strokeBorder((result.success ? Color.green : Color.orange).opacity(0.2), lineWidth: 1)
                 }
             }
+        }
+    }
+
+    // MARK: - Model Tab
+    private var modelTab: some View {
+        VStack(spacing: 16) {
+            modelConfigCard
+        }
+        .task(id: "\(store.connected)-\(store.selectedProfile)") {
+            await store.loadModelSettings()
+        }
+    }
+
+    private var mainModelChoice: ModelChoice? {
+        guard let catalog = store.modelSettingsCatalog, !catalog.model.isEmpty else { return nil }
+        return ModelChoice(provider: catalog.provider, model: catalog.model)
+    }
+
+    private var modelConfigCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("模型配置", systemImage: "cpu")
+                .font(.system(size: 13, weight: .semibold))
+
+            Text("主模型是服务端全局默认；fallback 链按顺序在主模型失败时自动接管。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            modelRow(value: mainModelChoice)
+            Divider()
+            fallbackSection
+
+            if let error = store.modelSettingsError {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle")
+                    Text(error)
+                }
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+        }
+    }
+
+    private func modelRow(value: ModelChoice?) -> some View {
+        let providers = store.modelSettingsCatalog?.providers ?? []
+        return HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("主模型")
+                    .font(.system(size: 12.5, weight: .medium))
+                Text(value.map { "\($0.model) · \($0.provider)" } ?? (store.modelSettingsLoading ? "加载中…" : "未知"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Menu {
+                ForEach(providers) { provider in
+                    Menu(provider.name) {
+                        ForEach(provider.choices) { choice in
+                            Button {
+                                Task { await store.setMainModel(choice) }
+                            } label: {
+                                if choice == value { Label(choice.model, systemImage: "checkmark") }
+                                else { Text(choice.model) }
+                            }
+                            .disabled(provider.unavailable.contains(choice.model))
+                        }
+                    }
+                }
+                if providers.isEmpty { Text("暂无可用模型") }
+            } label: {
+                HStack(spacing: 5) {
+                    if store.mainModelSaving {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "chevron.up.chevron.down")
+                    }
+                    Text(value.map(\.model) ?? "选择…").lineLimit(1)
+                }
+                .font(.system(size: 11))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Color.accentColor.opacity(0.1), in: Capsule())
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize(horizontal: true, vertical: false)
+            .disabled(!store.connected || store.modelSettingsLoading || store.mainModelSaving)
+            .help("设置主模型")
+        }
+    }
+
+    private var fallbackSection: some View {
+        let providers = store.modelSettingsCatalog?.providers ?? []
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Fallback 链")
+                    .font(.system(size: 12.5, weight: .medium))
+                Text(store.fallbackChain.isEmpty ? "未设置（主模型失败时不切换）" : "按顺序尝试，共 \(store.fallbackChain.count) 个")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Menu {
+                    ForEach(providers) { provider in
+                        Menu(provider.name) {
+                            ForEach(provider.choices) { choice in
+                                Button {
+                                    Task { await store.addFallback(choice) }
+                                } label: {
+                                    Text(choice.model)
+                                }
+                                .disabled(provider.unavailable.contains(choice.model) || store.fallbackChain.contains(choice))
+                            }
+                        }
+                    }
+                    if providers.isEmpty { Text("暂无可用模型") }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "plus")
+                        Text("添加")
+                    }
+                    .font(.system(size: 11))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .disabled(!store.connected || store.modelSettingsLoading || store.fallbackSaving)
+                .help("添加一个 fallback 模型")
+            }
+
+            ForEach(Array(store.fallbackChain.enumerated()), id: \.element.id) { index, choice in
+                HStack(spacing: 6) {
+                    Text("\(index + 1).")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Text("\(choice.model) · \(choice.provider)")
+                        .font(.system(size: 12))
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    Button {
+                        Task { await store.moveFallback(from: index, to: index - 1) }
+                    } label: {
+                        Image(systemName: "chevron.up")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(index == 0 || store.fallbackSaving)
+                    .help("上移")
+                    Button {
+                        Task { await store.moveFallback(from: index, to: index + 1) }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(index == store.fallbackChain.count - 1 || store.fallbackSaving)
+                    .help("下移")
+                    Button {
+                        Task { await store.removeFallback(at: index) }
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(store.fallbackSaving)
+                    .help("移除")
+                }
+            }
+
+            if store.fallbackSaving { ProgressView().controlSize(.mini) }
         }
     }
 

@@ -12,6 +12,20 @@ struct ModelChoice: Hashable, Identifiable {
     var id: String { provider + ":" + model }
     // Hermes uses whitespace splitting, not shell parsing: quotes are literal.
     var switchValue: String { "\(model) --provider \(provider) --session" }
+    var switchValueGlobal: String { "\(model) --provider \(provider)" }
+}
+
+extension ModelChoice {
+    /// Parse a `GET /api/config` response (`{"fallback_providers": [{provider, model, ...}]}`) into an ordered chain.
+    static func parseFallbackList(_ json: JSON) -> [ModelChoice] {
+        let list = json["fallback_providers"].array.isEmpty ? json["fallbacks"].array : json["fallback_providers"].array
+        return list.compactMap { entry in
+            let provider = entry["provider"].string
+            let model = entry["model"].string
+            guard !provider.isEmpty, !model.isEmpty else { return nil }
+            return ModelChoice(provider: provider, model: model)
+        }
+    }
 }
 
 struct ModelProvider: Identifiable {

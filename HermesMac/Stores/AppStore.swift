@@ -25,6 +25,12 @@ import AppKit
     var modelLoading: Set<ModelPickerContext> { models.loading }
     var modelSwitching: Set<String> = []
     var modelConfirmation: ModelSwitchConfirmation?
+    var modelSettingsCatalog: ModelCatalog?
+    var modelSettingsLoading = false
+    var modelSettingsError: String?
+    var fallbackChain: [ModelChoice] = []
+    var mainModelSaving = false
+    var fallbackSaving = false
     private var client: HermesClient?
     @ObservationIgnored private let imageCache = RemoteImageCache()
     @ObservationIgnored private let makeClient: (String) throws -> HermesClient
@@ -122,6 +128,90 @@ import AppKit
         await models.load(modelContext, runtimeID: current?.runtimeID, refresh: refresh, using: client)
         if epoch == generation { pruneConversationCache() }
     }
+    func loadModelSettings() async {
+        guard connected, !selectedProfile.isEmpty, let client else { return }
+        let epoch = generation
+        modelSettingsLoading = true; modelSettingsError = nil
+        defer { if epoch == generation { modelSettingsLoading = false } }
+        do {
+            let json = try await client.execute(.modelOptions(profile: selectedProfile, runtimeID: nil, refresh: false))
+            guard epoch == generation else { return }
+            modelSettingsCatalog = try ModelCatalog(json)
+        } catch {
+            guard epoch == generation else { return }
+            modelSettingsError = error.localizedDescription
+        }
+        do {
+            let json = try await client.rest("/api/config", query: [URLQueryItem(name: "profile", value: selectedProfile)])
+            guard epoch == generation else { return }
+            fallbackChain = ModelChoice.parseFallbackList(json)
+        } catch {
+            guard epoch == generation else { return }
+            fallbackChain = []
+        }
+    }
+    func setMainModel(_ choice: ModelChoice) async {
+        guard connected, !selectedProfile.isEmpty, let client else { return }
+        guard modelSettingsCatalog?.providers.contains(where: {
+            $0.choices.contains(choice) && !$0.unavailable.contains(choice.model)
+        }) == true else { return }
+        let epoch = generation
+        mainModelSaving = true; modelSettingsError = nil
+        defer { if epoch == generation { mainModelSaving = false } }
+        do {
+            let body = JSON.object([
+                "scope": .string("main"),
+                "provider": .string(choice.provider),
+                "model": .string(choice.model),
+                "profile": .string(selectedProfile)
+            ])
+            let result = try await client.rest("/api/model/set", method: "POST", body: body)
+            guard epoch == generation else { return }
+            let returnedModel = result["model"].string
+            modelSettingsCatalog?.model = returnedModel.isEmpty ? choice.model : returnedModel
+            modelSettingsCatalog?.provider = choice.provider
+        } catch {
+            guard epoch == generation else { return }
+            modelSettingsError = error.localizedDescription
+        }
+    }
+    func setFallbackChain(_ chain: [ModelChoice]) async {
+        guard connected, !selectedProfile.isEmpty, let client else { return }
+        let epoch = generation
+        fallbackSaving = true; modelSettingsError = nil
+        defer { if epoch == generation { fallbackSaving = false } }
+        do {
+            let fallbacks: [JSON] = chain.map { .object(["provider": .string($0.provider), "model": .string($0.model)]) }
+            let body = JSON.object([
+                "profile": .string(selectedProfile),
+                "config": .object([
+                    "fallback_providers": .array(fallbacks)
+                ])
+            ])
+            _ = try await client.rest("/api/config", method: "PUT", body: body)
+            guard epoch == generation else { return }
+            fallbackChain = chain
+        } catch {
+            guard epoch == generation else { return }
+            modelSettingsError = error.localizedDescription
+        }
+    }
+    func addFallback(_ choice: ModelChoice) async {
+        guard !fallbackChain.contains(choice) else { return }
+        await setFallbackChain(fallbackChain + [choice])
+    }
+    func removeFallback(at index: Int) async {
+        guard fallbackChain.indices.contains(index) else { return }
+        var chain = fallbackChain; chain.remove(at: index)
+        await setFallbackChain(chain)
+    }
+    func moveFallback(from source: Int, to destination: Int) async {
+        guard fallbackChain.indices.contains(source), fallbackChain.indices.contains(destination) else { return }
+        var chain = fallbackChain
+        let item = chain.remove(at: source)
+        chain.insert(item, at: destination)
+        await setFallbackChain(chain)
+    }
     func switchModel(_ choice: ModelChoice, confirmation: ModelSwitchConfirmation? = nil) async {
         guard canSwitchModel, let client else { return }
         if let confirmation {
@@ -209,6 +299,7 @@ import AppKit
             botScreen.disconnected()
             client?.disconnect(); client = next; connected = false; connecting = true; connection = "连接中…"; error = nil
             models.reset(); modelSwitching = []; modelConfirmation = nil
+            modelSettingsCatalog = nil; fallbackChain = []; modelSettingsError = nil; modelSettingsLoading = false; mainModelSaving = false; fallbackSaving = false
             sendingSessions = []; creatingSessions = [:]; routes = [:]; earlyFrames = [:]; buffered = []; flushTask?.cancel(); flushTask = nil
             if changed { conversationAccessOrder = []; conversations = [:]; sessions = [:]; profiles = []; sendingSessions = []; creatingSessions = [:]; selectedProfile = ""; selectedSession = nil; draft = ""; search = "" }
             address = next.service; local.address = address

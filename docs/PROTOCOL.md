@@ -87,6 +87,17 @@
 
 `config.set` 的模型字符串由服务端按空白拆分，名称不加 shell 引号；引号会被当作提供商 ID 的一部分。模拟服务采用相同规则，并通过拒绝带引号的提供商名称的回归用例验证。
 
+## 设置页模型配置（主模型与 Fallback）
+
+设置页的「模型设置」标签提供全局主模型与 fallback 模型链配置，对照官方 Web 端契约实现：
+
+| 项 | 读 | 写 |
+| --- | --- | --- |
+| 主模型 | `model.options`（不带 `session_id`）返回当前 `model/provider` | `POST /api/model/set`，body `{scope: "main", provider, model, profile}` |
+| Fallback 链 | `GET /api/config?profile=…` 返回 `fallback_providers: [{provider, model, …}]` | `PUT /api/config`，body `{profile, config: {fallback_providers: [{provider, model}, …]}}`（空数组清除） |
+
+主模型写入服务端 `model.default`/`model.provider`，对新会话生效；fallback 通过 `PUT /api/config` 写入顶层 `fallback_providers` 数组（官方 `FallbackModelsField` 同款），客户端支持添加、移除与重排。写入失败保留原值并提示；旧服务不支持时同样优雅降级。
+
 ## Bot Screen 扩展
 
 桌面契约单独对照官方 revision [`8f817911723e3ec13e7f47fc022fdcc9e2149354`](https://github.com/NousResearch/hermes-agent/tree/8f817911723e3ec13e7f47fc022fdcc9e2149354)。源码依据为 `tui_gateway/methods_display.py`、`hermes_cli/web_routers/display.py`、`tools/bot_desktop/{runtime,lease}.py` 及 `apps/desktop/src/plugins/hermes-bots/screen-pane.tsx`。这不改变此前聊天协议基线，也不等于已验证真实服务运行此 revision。

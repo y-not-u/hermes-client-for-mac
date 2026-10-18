@@ -187,3 +187,10 @@ HERMES_LIVE_SERVER='<自行填写已授权服务地址>' HERMES_LIVE_CHAT=1 swif
 - 新增原生 NSHostingView 回归，检查多行中文链接的每个字符、周边普通文字、界外位置，以及文字更新后的失效。
 - `HERMES_TEST_VENV=/tmp/hermes-instance-py314 ./script/test.sh`：117 项，0 失败，1 项 opt-in live test 跳过。日志 `/tmp/hermes-link-full-tests.log`。
 - `./script/build_and_run.sh --build`：Debug 签名构建成功；随后重新启动开发版。`git diff --check` 通过。尚未在原始会话中人工移动鼠标验收。
+
+## 2026-10-19：设置页模型配置（主模型与 Fallback 链）
+
+- 设置新增「模型设置」标签，包含：主模型（全局默认）、Fallback 链（`fallback_providers` 有序链，可添加/移除/重排）。
+- 主模型写 `POST /api/model/set`（body `{scope: "main", provider, model, profile}`），读用不带 `session_id` 的 `model.options`。Fallback 链走 `GET /api/config?profile=…` 读取 `fallback_providers`，写 `PUT /api/config`（body `{profile, config: {fallback_providers: [{provider, model}]}}`，空数组清除），与官方 `FallbackModelsField` 实现一致。读取/写入失败保留原值并提示，不静默降级。
+- `./script/test.sh`：135 项，134 通过、1 项 opt-in live test 跳过、0 失败。新增集成回归覆盖主模型/Fallback 设置与读取回读。`swift build` 通过。
+- 未做真实验收：对照官方 `hermes_cli/web_routers/config_env.py`、`models.py` 与 `apps/desktop/src/app/settings/fallback-models-field.tsx` 源码实现：主模型使用 `POST /api/model/set`，Fallback 链使用 `GET/PUT /api/config`。建议在支持的服务上人工验证主模型与 Fallback 链是否生效。

@@ -41,6 +41,8 @@ class Fixture:
         self.clarify_questions = None
         self.clarify_open = {}
         self.cancels = []
+        self.models = {}
+        self.fallbacks = {}
 
     async def control(self, request):
         body = await request.json()
@@ -135,6 +137,26 @@ class Fixture:
             return web.json_response({'ticket': 'fixture-ticket'})
         if path == '/api/profiles':
             return web.json_response({'profiles': [{'name': p, 'display_name': p.upper()} for p in ['a', 'b']]})
+        if path == '/api/config':
+            profile = request.query.get('profile') or 'a'
+            if request.method == 'PUT':
+                body = await request.json()
+                profile = body.get('profile', profile)
+                incoming_config = body.get('config', {})
+                if 'fallback_providers' in incoming_config:
+                    self.fallbacks[profile] = incoming_config['fallback_providers']
+                return web.json_response({'ok': True})
+            return web.json_response({
+                'model': self.models.get(profile, {}).get('model', 'default-' + profile),
+                'fallback_providers': self.fallbacks.get(profile, [])
+            })
+        if path == '/api/model/set':
+            body = await request.json()
+            profile = body.get('profile', 'a')
+            scope = body.get('scope', 'main')
+            if scope == 'main':
+                self.models[profile] = {'model': body['model'], 'provider': body['provider']}
+            return web.json_response({'ok': True, 'model': body.get('model', ''), 'provider': body.get('provider', '')})
         if path in ['/api/sessions', '/api/sessions/search']:
             self.session_reads.append({'path': path, **dict(request.query)})
             profile = request.query.get('profile')
@@ -200,8 +222,9 @@ class Fixture:
             return
         if method == 'model.options':
             session = next((s for s in self.sessions.values() if s['session_id'] == params.get('session_id')), {})
-            result = {'provider': session.get('model_provider', 'fixture'),
-                      'model': session.get('model', 'default-' + params['profile']),
+            global_model = self.models.get(params['profile'], {'model': 'default-' + params['profile'], 'provider': 'fixture'})
+            result = {'provider': session.get('model_provider', global_model['provider']),
+                      'model': session.get('model', global_model['model']),
                       'providers': [{'slug': 'fixture', 'name': 'Fixture', 'models': ['default-' + params['profile'], 'new-model']},
                                     {'slug': 'other', 'name': 'Other', 'models': ['new-model']}]}
         elif method == 'config.set' and params['key'] == 'model':
@@ -209,7 +232,6 @@ class Fixture:
             if self.model_error:
                 await ws.send_json({'jsonrpc': '2.0', 'id': frame['id'], 'error': {'code': 5001, 'message': 'model switch refused'}})
                 return
-            session = next(s for s in self.sessions.values() if s['session_id'] == params['session_id'])
             words = params['value'].split()
             provider = words[words.index('--provider') + 1]
             if provider not in ('fixture', 'other'):
@@ -218,9 +240,12 @@ class Fixture:
             result = {'key': 'model', 'value': words[0]}
             if self.model_confirm and not params.get('confirm_expensive_model'):
                 result.update(confirm_required=True, confirm_message='This model costs more.')
-            else:
+            elif params.get('session_id'):
+                session = next(s for s in self.sessions.values() if s['session_id'] == params['session_id'])
                 session['model'] = words[0]
-                session['model_provider'] = words[words.index('--provider') + 1]
+                session['model_provider'] = provider
+            else:
+                self.models[params['profile']] = {'model': words[0], 'provider': provider}
         elif method == 'session.create':
             self.counter += 1
             sid = f"stored-{self.counter}"
