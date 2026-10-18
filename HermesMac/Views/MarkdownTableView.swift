@@ -16,7 +16,7 @@ import AppKit
         private var heights: [CGFloat: CGFloat] = [:]
 
         init(source: String, header: Bool, fontSize: CGFloat) {
-            content = (try? AttributedString(markdown: source, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(source)
+            content = InlineMarkdown.parse(source)
             let measured = NSMutableAttributedString(attributedString: NSAttributedString(content))
             for run in content.runs {
                 let intent = run.inlinePresentationIntent ?? []
@@ -130,6 +130,7 @@ struct MarkdownTableView: View, Equatable {
         HStack(alignment: .top, spacing: 0) {
             ForEach(table.headers.indices, id: \.self) { column in
                 Text(cells[column].content)
+                    .modifier(MarkdownLinkCursor(enabled: cells[column].content.runs.contains { $0.link != nil }))
                     .font(.system(size: fontSize, weight: header ? .semibold : .regular))
                     .multilineTextAlignment(textAlignment(for: column))
                     .frame(width: widths[column], alignment: alignment(for: column))

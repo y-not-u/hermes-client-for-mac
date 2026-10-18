@@ -273,7 +273,9 @@ private struct MarkdownLineView: View, Equatable {
         }
     }
 
-    private func inline(_ value: String) -> Text {
-        Text((try? AttributedString(markdown: value, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(value))
+    private func inline(_ value: String) -> some View {
+        let content = InlineMarkdown.parse(value)
+        return Text(content)
+            .modifier(MarkdownLinkCursor(enabled: content.runs.contains { $0.link != nil }))
     }
 }

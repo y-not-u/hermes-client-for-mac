@@ -155,3 +155,19 @@ HERMES_LIVE_SERVER='<自行填写已授权服务地址>' HERMES_LIVE_CHAT=1 swif
 - `HERMES_TEST_VENV=/tmp/hermes-instance-py314 ./script/test.sh`：110 项，0 失败，1 项 opt-in live test 跳过。日志 `/tmp/hermes-table-full-tests.log`。默认 Python 环境的 aiohttp 无法导入 web，沿用已存在的 Python 3.14 测试环境。
 - `./script/build_and_run.sh --build`：Debug 签名构建成功。`git diff --check` 通过。
 - 尚未人工验收截图中原始会话的滚动体验；建议在开发版复查该表格的横向／纵向滚动、流式生成、文本选择及字号调整。
+
+## 2026-10-18：中文标点旁的 Markdown 加粗
+
+- 正文与表格共用 `InlineMarkdown`，兼容 `**适合怎么放：**若……`、`**“大场面”**的……` 等中文标点边界；解析时临时补充字母边界，解析后删除，不在显示／复制内容中留下占位符。
+- 新增 6 项回归，覆盖截图中的中文段落、多处加粗、嵌套斜体／链接、代码与转义星号、链接目标、流式补全及表格单元格；同时检查原有正常 Markdown 的解析结果保持一致。
+- `HERMES_TEST_VENV=/tmp/hermes-instance-py314 ./script/test.sh`：116 项，0 失败，1 项 opt-in live test 跳过。日志 `/tmp/hermes-inline-full-tests.log`。
+- `./script/build_and_run.sh --build`：Debug 签名构建成功，随后启动开发版并确认进程运行。`git diff --check` 通过。
+- 未人工复查截图原始会话；建议打开该回复检查中文引号／冒号附近的加粗及复制文本。
+
+## 2026-10-18：Markdown 链接悬停光标
+
+- 正文与表格的蓝色链接悬停时设置 `NSCursor.pointingHand`，保留 SwiftUI Text 的选择、链接样式及点击行为。仅含链接的文字启用悬停桥接。
+- 通过原生 NSTextField 的公开辅助功能字符几何信息识别链接区域，缓存与当前文本／布局对应的字符矩形；换行链接逐字命中，普通文字与行尾空白不属于链接区域。
+- 新增原生 NSHostingView 回归，检查多行中文链接的每个字符、周边普通文字、界外位置，以及文字更新后的失效。
+- `HERMES_TEST_VENV=/tmp/hermes-instance-py314 ./script/test.sh`：117 项，0 失败，1 项 opt-in live test 跳过。日志 `/tmp/hermes-link-full-tests.log`。
+- `./script/build_and_run.sh --build`：Debug 签名构建成功；随后重新启动开发版。`git diff --check` 通过。尚未在原始会话中人工移动鼠标验收。
