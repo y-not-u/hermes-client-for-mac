@@ -615,6 +615,16 @@ private struct MessageRowView: View {
                         MarkdownView(text: message.text, media: MediaPresentation(
                             conversation: conversation, messageID: message.id, store: store, preview: previewImage
                         ))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(
+                            Color.secondary.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: 15, style: .continuous)
+                        )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                                .strokeBorder(Color.secondary.opacity(0.16), lineWidth: 0.8)
+                        }
                     } else if isRunning && (tools.isEmpty || tools.allSatisfy(\.complete)) {
                         HStack(spacing: 6) {
                             ProgressView()

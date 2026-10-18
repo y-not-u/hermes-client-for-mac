@@ -59,10 +59,11 @@ struct SessionListView: View {
                     Image(systemName: "plus")
                         .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(.secondary)
+                        .frame(width: 26, height: 26)
+                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                .frame(width: 26, height: 26)
-                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .help("新会话 · ⌘N")
 
                 Button {
@@ -73,10 +74,11 @@ struct SessionListView: View {
                         .foregroundStyle(.secondary)
                         .rotationEffect(.degrees(store.listLoading ? 360 : 0))
                         .animation(store.listLoading ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: store.listLoading)
+                        .frame(width: 26, height: 26)
+                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                .frame(width: 26, height: 26)
-                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .help("刷新会话")
             }
             .padding(.horizontal, 12)
