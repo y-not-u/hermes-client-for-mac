@@ -81,6 +81,54 @@ import Foundation
         }
         return try await Self.decodeResponse(data)
     }
+    /// New backends fence session edits with a snapshot and an idempotency identity.
+    /// Only an unavailable snapshot route permits the legacy request shape.
+    func mutateSession(_ id: String, profile: String, changes: [String: JSON]? = nil) async throws {
+        let path = "/api/sessions/\(id)"
+        var identity: [String: JSON] = [:]
+        let snapshot: JSON?
+        do {
+            snapshot = try await rest(path + "/mutation-snapshot", query: [URLQueryItem(name: "profile", value: profile)])
+        } catch let error as ClientError where [404, 405].contains(error.httpStatus ?? 0) {
+            snapshot = nil
+        }
+        if let snapshot {
+            guard snapshot["session_id"].string == id,
+                  case .bool(let exists) = snapshot["exists"],
+                  case .number(let revision) = snapshot["runtime_revision"],
+                  revision.isFinite, revision >= 0, revision.rounded() == revision else {
+                throw ClientError(message: "会话版本快照无效，请检查 Hermes 后端版本")
+            }
+            guard exists else { throw ClientError(message: "会话已不存在，请刷新列表", httpStatus: 404) }
+            identity = ["request_id": .string(UUID().uuidString), "expected_revision": .number(revision)]
+            if snapshot["runtime_generation"] != .null {
+                guard case .number(let generation) = snapshot["runtime_generation"],
+                      generation.isFinite, generation >= 0, generation.rounded() == generation else {
+                    throw ClientError(message: "会话版本快照无效，请检查 Hermes 后端版本")
+                }
+                identity["expected_generation"] = .number(generation)
+            }
+        }
+        try Task.checkCancellation()
+        do {
+            if let changes {
+                var body = changes
+                body["profile"] = .string(profile)
+                body.merge(identity) { _, value in value }
+                _ = try await rest(path, method: "PATCH", body: .object(body))
+            } else {
+                var query = [URLQueryItem(name: "profile", value: profile)]
+                for key in identity.keys.sorted() {
+                    let value = identity[key]!
+                    let encoded = value.string.isEmpty ? String(format: "%.0f", value.number) : value.string
+                    query.append(URLQueryItem(name: key, value: encoded))
+                }
+                _ = try await rest(path, method: "DELETE", query: query)
+            }
+        } catch let error as ClientError where error.httpStatus == 409 {
+            throw ClientError(message: "会话修改被拒绝，可能已发生变化或正在使用中；请刷新后重试。\(error.message)", httpStatus: 409)
+        }
+    }
     // Nonisolated async work runs on the generic executor, outside the UI actor.
     // History and image responses can contain megabytes of JSON/base64 text.
     nonisolated private static func decodeResponse(_ data: Data) async throws -> JSON {

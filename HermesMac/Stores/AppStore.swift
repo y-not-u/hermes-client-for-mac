@@ -825,7 +825,7 @@ import AppKit
         guard let client, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let profile = owner ?? selectedProfile; let epoch = generation
         do {
-            _ = try await client.rest("/api/sessions/\(row.id)", method: "PATCH", body: .object(["title": .string(title), "profile": .string(profile)]))
+            try await client.mutateSession(row.id, profile: profile, changes: ["title": .string(title)])
             guard epoch == generation else { return }
             if let index = sessions[profile]?.firstIndex(where: { $0.id == row.id }) { sessions[profile]?[index].title = title }
             local.update(service) { state in
@@ -849,11 +849,9 @@ import AppKit
         defer { sessionMutations.remove(key); pruneConversationCache() }
         do {
             if archive {
-                _ = try await client.rest("/api/sessions/\(row.id)", method: "PATCH",
-                    body: .object(["profile": .string(profile), "archived": .bool(true)]))
+                try await client.mutateSession(row.id, profile: profile, changes: ["archived": .bool(true)])
             } else {
-                _ = try await client.rest("/api/sessions/\(row.id)", method: "DELETE",
-                    query: [URLQueryItem(name: "profile", value: profile)])
+                try await client.mutateSession(row.id, profile: profile)
             }
             guard epoch == generation else { return }
             sessions[profile]?.removeAll { $0.id == row.id }

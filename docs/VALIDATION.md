@@ -194,3 +194,12 @@ HERMES_LIVE_SERVER='<自行填写已授权服务地址>' HERMES_LIVE_CHAT=1 swif
 - 主模型写 `POST /api/model/set`（body `{scope: "main", provider, model, profile}`），读用不带 `session_id` 的 `model.options`。Fallback 链走 `GET /api/config?profile=…` 读取 `fallback_providers`，写 `PUT /api/config`（body `{profile, config: {fallback_providers: [{provider, model}]}}`，空数组清除），与官方 `FallbackModelsField` 实现一致。读取/写入失败保留原值并提示，不静默降级。
 - `./script/test.sh`：135 项，134 通过、1 项 opt-in live test 跳过、0 失败。新增集成回归覆盖主模型/Fallback 设置与读取回读。`swift build` 通过。
 - 未做真实验收：对照官方 `hermes_cli/web_routers/config_env.py`、`models.py` 与 `apps/desktop/src/app/settings/fallback-models-field.tsx` 源码实现：主模型使用 `POST /api/model/set`，Fallback 链使用 `GET/PUT /api/config`。建议在支持的服务上人工验证主模型与 Fallback 链是否生效。
+
+## 2026-10-25 会话修改版本快照
+
+归档报 HTTP 409 `client_upgrade_required` 的原因是客户端未发送新版后端要求的修改身份。归档、重命名和删除现先读取 `mutation-snapshot`，携带请求 ID、版本号及可用的 generation；快照路由 404/405 时兼容旧后端，其他快照错误中止写入。冲突不自动重发，保留本地会话状态。
+
+- `HERMES_TEST_VENV=/tmp/hermes-session-mutation-venv ./script/test.sh`：139 项，138 通过、1 项 opt-in live test 跳过、0 失败。新增回归验证新版修改身份、旧版路由兼容、无效/失败快照阻止写入及冲突时不移除会话、不重发。
+- `./script/build_and_run.sh --verify`：Debug 签名构建与启动进程检查通过。`git diff --check` 通过。
+- 原临时 Python 环境的 Python 3.15 ensurepip 失败，使用 Python 3.14 创建独立临时测试环境后通过。日志：`/tmp/hermes-session-mutation-tests.log`、`/tmp/hermes-mac-build.log`。
+- 未在真实服务修改用户会话；真实归档、删除、重命名仍需人工验收。

@@ -242,6 +242,9 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertEqual(write["method"].string, "PATCH")
         XCTAssertEqual(write["profile"].string, "a")
         XCTAssertTrue(write["body"]["archived"].bool)
+        XCTAssertNotNil(UUID(uuidString: write["body"]["request_id"].string))
+        XCTAssertEqual(write["body"]["expected_revision"].number, 7)
+        XCTAssertEqual(write["body"]["expected_generation"].number, 3)
     }
 
     func testDeleteUsesOriginalProfileAndClearsOnlyItsDraft() async throws {
@@ -270,6 +273,64 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         let stats = try await fixture(["action": .string("stats")])
         XCTAssertEqual(stats["session_writes"].array.last?["method"].string, "DELETE")
         XCTAssertEqual(stats["session_writes"].array.last?["profile"].string, "a")
+        let query = try XCTUnwrap(stats["session_writes"].array.last)["query"]
+        XCTAssertEqual(query["expected_revision"].string, "7")
+        XCTAssertEqual(query["expected_generation"].string, "3")
+        XCTAssertNotNil(UUID(uuidString: query["request_id"].string))
+    }
+
+    func testSessionEditsSupportLegacySnapshotRoute() async throws {
+        let (_, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        for status in [404, 405] {
+            _ = try await fixture(["action": .string("configure"), "snapshot_status": .number(Double(status))])
+            try await client.mutateSession("cli-readonly", profile: "a", changes: ["title": .string("renamed")])
+            try await client.mutateSession("cli-readonly", profile: "a")
+        }
+        let stats = try await fixture(["action": .string("stats")])
+        XCTAssertEqual(stats["session_writes"].array.count, 4)
+        XCTAssertTrue(stats["session_writes"].array.allSatisfy { $0["body"]["request_id"] == .null && $0["query"]["request_id"] == .null })
+    }
+
+    func testSnapshotFailureNeverSendsSessionEdit() async throws {
+        let (_, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        for status in [403, 409, 503, 200] {
+            _ = try await fixture(["action": .string("configure"), "snapshot_status": .number(Double(status)), "snapshot_invalid": .bool(true)])
+            do {
+                try await client.mutateSession("cli-readonly", profile: "a", changes: ["archived": .bool(true)])
+                XCTFail("Invalid or failed snapshots must stop the write")
+            } catch {}
+        }
+        let stats = try await fixture(["action": .string("stats")])
+        XCTAssertTrue(stats["session_writes"].array.isEmpty)
+    }
+
+    func testRevisionConflictPreservesSessionAndDoesNotRetry() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        await store.openSession("cli-readonly")
+        let row = try XCTUnwrap(store.sessions["a"]?.first { $0.id == "cli-readonly" })
+        _ = try await fixture(["action": .string("configure"), "mutation_conflict": .bool(true)])
+        await store.removeSession(row, archive: true, profile: "a", service: client.service)
+        XCTAssertEqual(store.selectedSession, row.id)
+        XCTAssertTrue(store.sessions["a", default: []].contains { $0.id == row.id })
+        XCTAssertTrue(store.error?.contains("刷新后重试") == true)
+        let stats = try await fixture(["action": .string("stats")])
+        XCTAssertEqual(stats["session_writes"].array.count, 1)
+    }
+
+    func testRenameSendsMutationIdentity() async throws {
+        let (_, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        try await client.mutateSession("cli-readonly", profile: "b", changes: ["title": .string("new title")])
+        let stats = try await fixture(["action": .string("stats")])
+        let body = try XCTUnwrap(stats["session_writes"].array.last)["body"]
+        XCTAssertEqual(body["title"].string, "new title")
+        XCTAssertEqual(body["profile"].string, "b")
+        XCTAssertEqual(body["expected_revision"].number, 7)
+        XCTAssertEqual(body["expected_generation"].number, 3)
+        XCTAssertNotNil(UUID(uuidString: body["request_id"].string))
     }
 
     func testFailedSessionRemovalPreservesListAndSelection() async throws {

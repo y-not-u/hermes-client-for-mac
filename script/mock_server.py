@@ -20,6 +20,9 @@ class Fixture:
         self.session_rows = []
         self.session_writes = []
         self.session_write_error = False
+        self.snapshot_status = 200
+        self.snapshot_invalid = False
+        self.mutation_conflict = False
         self.responses = []
         self.counter = 0
         self.native = False
@@ -60,6 +63,9 @@ class Fixture:
             self.resume_delay = body.get('resume_delay', self.resume_delay)
             self.session_rows = body.get('session_rows', self.session_rows)
             self.session_write_error = body.get('session_write_error', self.session_write_error)
+            for key in ('snapshot_status', 'snapshot_invalid', 'mutation_conflict'):
+                if key in body:
+                    setattr(self, key, body[key])
             for key in ('correction_status', 'correction_delay', 'correction_error', 'steer_status', 'complete_on_correction', 'drop_on_correction'):
                 if key in body:
                     setattr(self, key, body[key])
@@ -174,6 +180,13 @@ class Fixture:
             limit = int(request.query.get('limit', 40))
             rows = rows[offset:offset + limit]
             return web.json_response({'results' if path.endswith('search') else 'sessions': rows})
+        if path.endswith('/mutation-snapshot'):
+            if self.snapshot_status != 200:
+                return web.json_response({'detail': 'snapshot unavailable'}, status=self.snapshot_status)
+            if self.snapshot_invalid:
+                return web.json_response({'ok': True})
+            return web.json_response({'session_id': path.split('/')[-2], 'exists': True,
+                'runtime_revision': 7, 'runtime_generation': 3})
         if path.endswith('/messages'):
             sid = request.match_info['sid']
             self.history_reads.append({'session_id': sid, **dict(request.query)})
@@ -190,7 +203,13 @@ class Fixture:
             sid = path.rsplit('/', 1)[-1]
             body = await request.json() if request.method == 'PATCH' else {}
             profile = body.get('profile') if request.method == 'PATCH' else request.query.get('profile')
-            self.session_writes.append({'session_id': sid, 'profile': profile, 'method': request.method, 'body': body})
+            self.session_writes.append({'session_id': sid, 'profile': profile, 'method': request.method, 'body': body, 'query': dict(request.query)})
+            identity = body if request.method == 'PATCH' else request.query
+            if self.snapshot_status != 404 and self.snapshot_status != 405:
+                if not identity.get('request_id') or str(identity.get('expected_revision')) != '7' or str(identity.get('expected_generation')) != '3':
+                    return web.json_response({'detail': 'client_upgrade_required'}, status=409)
+            if self.mutation_conflict:
+                return web.json_response({'detail': 'revision_conflict'}, status=409)
             if self.session_write_error:
                 return web.json_response({'error': 'write refused'}, status=409)
             if sid in self.sessions and self.sessions[sid]['profile'] == profile:

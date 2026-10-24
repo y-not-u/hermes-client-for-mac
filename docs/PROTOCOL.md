@@ -2,6 +2,12 @@
 
 官方源码基线：[c57331677d7fc46298a7159cf3a650853f0966c5](https://github.com/NousResearch/hermes-agent/tree/c57331677d7fc46298a7159cf3a650853f0966c5)。本文描述当前客户端实际使用的契约。客户端没有启动时的 git revision 校验；方法不可用、响应非 JSON 或原生认证能力缺失时会显示错误并提示检查版本。
 
+## 会话写入版本快照
+
+归档、重命名与删除额外对照官方源码 [4dcef215](https://github.com/NousResearch/hermes-agent/tree/4dcef215cfe41bd2d02c2d1dad6e257a18101216) 的 `hermes_cli/web_routers/sessions.py` 与 `hermes_cli/web_server_sessions.py`。新版后端拒绝不带修改身份的旧请求，并返回 HTTP 409 `client_upgrade_required`。
+
+每次操作先 GET `/api/sessions/{storedID}/mutation-snapshot?profile=…`，读取 `runtime_revision` 与非空的 `runtime_generation`。PATCH body 或 DELETE query 携带唯一 `request_id`、`expected_revision` 及可用的 `expected_generation`，使用与快照相同的 profile。只有快照接口返回 404/405 时使用旧请求格式；认证、服务异常或无效快照不触发旧格式写入。版本冲突不自动刷新快照或重发，保留本地会话状态并提示用户刷新后重试。此源码对照不等于真实服务操作验证。
+
 ## HTTP
 
 | 接口 | 用途与归属 |
