@@ -32,7 +32,19 @@ jobs:
       - name: Run Tests
         run: |
           python3 script/test_ci_signing.py
+          python3 script/test_prepare_update.py
           ./script/test.sh
+
+      - name: Set Release Version
+        env:
+          HERMES_REF_TYPE: ${{ github.ref_type }}
+          HERMES_REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$HERMES_REF_TYPE" = "tag" ]; then
+            python3 script/prepare_update.py metadata --tag "$HERMES_REF_NAME" --build "$GITHUB_RUN_NUMBER" --github-env "$GITHUB_ENV"
+          else
+            python3 script/prepare_update.py metadata --build "$GITHUB_RUN_NUMBER" --github-env "$GITHUB_ENV"
+          fi
 
       - name: Set up CI Signing
         if: github.event_name != 'pull_request'
@@ -62,6 +74,8 @@ jobs:
             ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="$HERMES_SIGNING_IDENTITY" \
+            MARKETING_VERSION="$HERMES_MARKETING_VERSION" \
+            CURRENT_PROJECT_VERSION="$HERMES_BUILD_NUMBER" \
             build
 
       - name: Remove CI Signing Keychain
@@ -73,7 +87,7 @@ jobs:
 
       - name: Verify Application
         run: |
-          codesign --verify --strict --verbose=2 build/Build/Products/Release/HermesMac.app
+          codesign --verify --deep --strict --verbose=2 build/Build/Products/Release/HermesMac.app
           codesign --verify --strict --verbose=2 build/Build/Products/Release/HermesMac.app/Contents/MacOS/HermesCredentialHelper
           lipo build/Build/Products/Release/HermesMac.app/Contents/MacOS/HermesMac -verify_arch arm64 x86_64
           lipo build/Build/Products/Release/HermesMac.app/Contents/MacOS/HermesCredentialHelper -verify_arch arm64 x86_64
@@ -90,6 +104,19 @@ jobs:
           echo "Package created successfully: HermesMac.zip"
           cat HermesMac.zip.sha256
 
+      - name: Generate Signed Update Feed
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          HERMES_RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 script/prepare_update.py appcast \
+            --tag "$HERMES_RELEASE_TAG" \
+            --archive HermesMac.zip \
+            --output-dir "$RUNNER_TEMP/hermes-update" \
+            --sparkle-bin build/SourcePackages/artifacts/sparkle/Sparkle/bin
+          cp "$RUNNER_TEMP/hermes-update/appcast.xml" appcast.xml
+
       - name: Upload Build Artifacts
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
@@ -98,6 +125,7 @@ jobs:
           path: |
             HermesMac.zip
             HermesMac.zip.sha256
+            appcast.xml
           retention-days: 30
 
       - name: Create GitHub Release
@@ -107,4 +135,5 @@ jobs:
           files: |
             HermesMac.zip
             HermesMac.zip.sha256
+            appcast.xml
           generate_release_notes: true

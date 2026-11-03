@@ -1,5 +1,16 @@
 # 验证与人工验收
 
+## 2026-11-03 应用更新
+
+- 集成固定版本 Sparkle 2.10.1，菜单与设置提供手动检查和自动检查开关；只在打包的正式版启动。默认每日检查，安装需确认，禁止静默自动安装。
+- Xcode Debug、Release 通用构建通过；Debug 启动及原生设置卡片布局、版本显示和禁用状态已检查。最初自签名构建因 library validation 的不同 Team ID 错误启动失败，使用 `SelfSigned.entitlements` 对主应用关闭该项验证后启动通过；保留 Hardened Runtime 和 Sparkle 更新签名校验，未来换 Apple Developer ID 应移除该例外。
+- `HERMES_TEST_VENV=/tmp/hermes-mac-test-venv ./script/test.sh`：149 项，1 项 opt-in live test 跳过，0 失败。新增 3 项配置检查覆盖正式/开发 bundle 隔离、无效 feed/key/build 及版本展示。日志 `/tmp/hermes-updater-final-tests.log`。
+- `python3 script/test_prepare_update.py`：8 项通过（含多个 subtests），覆盖稳定 tag、不可变下载地址、签名/大小/版本检查、密钥清理及现有公钥不允许自动换钥匙覆盖 CI。`python3 script/test_ci_signing.py`：5 项通过。
+- 实际 Release ZIP 经 `prepare_update.py` 生成 appcast，再用 Sparkle 官方 `sign_update --verify` 分别验证 ZIP 和 feed。嵌套代码签名验证通过。临时工具创建的隔离应用通过 Sparkle 检查本地签名 feed，接受 build 2；篡改版本后的 feed 被拒绝（`SUSparkleErrorDomain 1000`，improperly signed）。日志 `/tmp/hermes-update-probe.log`。
+- 另用独立 bundle ID 的临时自签名应用验证完整升级：通过标准对话框选择 Install Update、Install and Relaunch，完成本地下载、签名验证、解压、替换旧 bundle，并在新版启动后验证 `CFBundleVersion=2`。测试应用和临时文件已清理。日志 `/tmp/hermes-update-install.log`。未替换用户 `/Applications/HermesMac.app`，未向真实服务器发送测试聊天或修改会话。
+- `SPARKLE_PRIVATE_KEY` 已配置到 `y-not-u/hermes-client-for-mac` Actions Secrets，公钥在 Info.plist，原私钥保存在本机 Keychain 的 `com.hermes.mac.updates` account；临时导出已删除。实际更新私钥没有进入源码、日志或安装包。
+- Bash 语法、工作流 YAML 解析和 `git diff --check` 通过。Git 的 `safe.bareRepository=explicit` 曾阻止 Xcode 解析包缓存，构建脚本已加入仅对子进程生效的兼容，不改全局配置。更改尚未提交/推送，也未创建 tag 或 GitHub Release；真实 GitHub 下载和正式 Hermes 连续版本升级仍需在首次发布后验收。
+
 ## 2026-11-03 固定自签名发布身份
 
 - main/tag/手动发布改为从 Actions Secrets 导入固定 `.p12` 身份，按证书 SHA-1 指纹签名；缺少 secrets 时失败，PR 仅使用临时证书验证且不上传应用产物。

@@ -568,6 +568,7 @@ struct SettingsView: View {
     // MARK: - Appearance Tab
     private var appearanceTab: some View {
         VStack(spacing: 16) {
+            UpdateSettingsView(updater: AppUpdater.shared)
             // 文字显示
             VStack(alignment: .leading, spacing: 12) {
                 Label("文字显示", systemImage: "textformat.size")

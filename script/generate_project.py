@@ -24,7 +24,10 @@ obj('product', 'isa = PBXFileReference; explicitFileType = wrapper.application; 
 obj('products', f'isa = PBXGroup; children = ({uid("product")}); name = Products; sourceTree = "<group>";')
 obj('root', f'isa = PBXGroup; children = ({",".join(uid(str(f.relative_to(root))) for f in files + resources)},{uid("products")}); sourceTree = "<group>";')
 obj('sources', f'isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ({",".join(uid(str(f.relative_to(root))+"build") for f in files)}); runOnlyForDeploymentPostprocessing = 0;')
-obj('frameworks', 'isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;')
+obj('sparkle-package', 'isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/sparkle-project/Sparkle"; requirement = { kind = exactVersion; version = 2.10.1; };')
+obj('sparkle-product', f'isa = XCSwiftPackageProductDependency; package = {uid("sparkle-package")}; productName = Sparkle;')
+obj('sparkle-link', f'isa = PBXBuildFile; productRef = {uid("sparkle-product")};')
+obj('frameworks', f'isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = ({uid("sparkle-link")}); runOnlyForDeploymentPostprocessing = 0;')
 obj('resources', f'isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = ({",".join(uid(str(f.relative_to(root))+"build") for f in resources)}); runOnlyForDeploymentPostprocessing = 0;')
 obj('credential-helper', 'isa = PBXShellScriptBuildPhase; buildActionMask = 2147483647; files = (); inputPaths = ("$(SRCROOT)/script/build_credential_helper.sh", "$(SRCROOT)/Tools/CredentialHelper/main.swift", "$(SRCROOT)/HermesMac/Services/Keychain.swift"); name = "Build stable credential helper"; outputPaths = ("$(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/HermesCredentialHelper"); runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/bash; shellScript = "\\\"$SRCROOT/script/build_credential_helper.sh\\\"";')
 for kind in ['project','target']:
@@ -32,7 +35,7 @@ for kind in ['project','target']:
         settings = 'MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_VERSION = 5.0; CLANG_ENABLE_MODULES = YES; '
         if kind == 'target':
             settings += 'ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor; '
-            settings += 'PRODUCT_NAME = HermesMac; PRODUCT_BUNDLE_IDENTIFIER = com.hermes.mac; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = HermesMac/Info.plist; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity"; CODE_SIGN_STYLE = Automatic; ENABLE_HARDENED_RUNTIME = YES; '
+            settings += 'PRODUCT_NAME = HermesMac; PRODUCT_BUNDLE_IDENTIFIER = com.hermes.mac; MARKETING_VERSION = 0.1.0; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = HermesMac/Info.plist; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity"; CODE_SIGN_STYLE = Automatic; CODE_SIGN_ENTITLEMENTS = HermesMac/SelfSigned.entitlements; ENABLE_HARDENED_RUNTIME = YES; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks"; '
             if config == 'Debug':
                 settings = settings.replace('CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual; CODE_SIGN_IDENTITY = "HermesMac Local Development"; ENABLE_DEBUG_DYLIB = NO;')
                 settings = settings.replace('ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;', 'ASSETCATALOG_COMPILER_APPICON_NAME = AppIconDev;')
@@ -41,8 +44,8 @@ for kind in ['project','target']:
         settings += 'SWIFT_OPTIMIZATION_LEVEL = "'+('-Onone' if config == 'Debug' else '-O')+'";'
         obj(kind+config, f'isa = XCBuildConfiguration; name = {config}; buildSettings = {{ {settings} }};')
     obj(kind+'configs', f'isa = XCConfigurationList; buildConfigurations = ({uid(kind+"Debug")},{uid(kind+"Release")}); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release;')
-obj('target', f'isa = PBXNativeTarget; buildConfigurationList = {uid("targetconfigs")}; buildPhases = ({uid("sources")},{uid("frameworks")},{uid("resources")},{uid("credential-helper")}); buildRules = (); dependencies = (); name = HermesMac; productName = HermesMac; productReference = {uid("product")}; productType = "com.apple.product-type.application";')
-obj('project', f'isa = PBXProject; attributes = {{ LastUpgradeCheck = 1630; }}; buildConfigurationList = {uid("projectconfigs")}; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = {uid("root")}; productRefGroup = {uid("products")}; projectDirPath = ""; projectRoot = ""; targets = ({uid("target")});')
+obj('target', f'isa = PBXNativeTarget; buildConfigurationList = {uid("targetconfigs")}; buildPhases = ({uid("sources")},{uid("frameworks")},{uid("resources")},{uid("credential-helper")}); buildRules = (); dependencies = (); packageProductDependencies = ({uid("sparkle-product")}); name = HermesMac; productName = HermesMac; productReference = {uid("product")}; productType = "com.apple.product-type.application";')
+obj('project', f'isa = PBXProject; attributes = {{ LastUpgradeCheck = 1630; }}; buildConfigurationList = {uid("projectconfigs")}; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = {uid("root")}; productRefGroup = {uid("products")}; projectDirPath = ""; projectRoot = ""; packageReferences = ({uid("sparkle-package")}); targets = ({uid("target")});')
 (root/'HermesMac.xcodeproj/project.pbxproj').write_text('// !$*UTF8*$!\n{ archiveVersion = 1; classes = {}; objectVersion = 56; objects = {\n'+'\n'.join(objects)+f'\n}}; rootObject = {uid("project")}; }}\n')
 (root/'HermesMac.xcodeproj/xcshareddata/xcschemes/HermesMac.xcscheme').write_text(f'''<?xml version="1.0" encoding="UTF-8"?>
 <Scheme LastUpgradeVersion="1630" version="1.3">

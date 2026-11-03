@@ -3,6 +3,14 @@ set -euo pipefail
 MODE="${1:-run}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
+# Xcode uses bare repositories for SwiftPM's cache. Respect the user's global
+# policy while allowing that cache within this build process only.
+if [ "$(git config --get safe.bareRepository || true)" = "explicit" ]; then
+  hermes_git_config_count="${GIT_CONFIG_COUNT:-0}"
+  export "GIT_CONFIG_KEY_${hermes_git_config_count}=safe.bareRepository"
+  export "GIT_CONFIG_VALUE_${hermes_git_config_count}=all"
+  export GIT_CONFIG_COUNT="$((hermes_git_config_count + 1))"
+fi
 SIGNING_IDENTITY="${HERMES_SIGNING_IDENTITY:-HermesMac Local Development}"
 if [ "$SIGNING_IDENTITY" = "-" ]; then
   echo "Ad hoc signing cannot preserve credential access. Run ./script/setup_local_signing.sh and use HermesMac Local Development." >&2

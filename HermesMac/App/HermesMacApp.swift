@@ -6,6 +6,7 @@ import OSLog
     @AppStorage(ChatTypography.key) private var fontSize = ChatTypography.defaultSize
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var store: AppStore
+    @StateObject private var updater = AppUpdater.shared
     // SwiftUI may recreate the App value; the lock belongs to the process.
     private static let instanceLock: SingleInstanceLock = {
         #if DEBUG
@@ -63,6 +64,10 @@ import OSLog
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1120, height: 760)
         .commands {
+            CommandGroup(after: .appInfo) {
+                Button("检查更新…") { updater.checkForUpdates() }
+                    .disabled(!updater.canCheckForUpdates)
+            }
             CommandGroup(replacing: .newItem) {
                 Button("新建会话") { store.newSession() }.keyboardShortcut("n")
             }
@@ -158,6 +163,7 @@ import OSLog
             NSApp.applicationIconImage = icon
         }
         ReplyNotifications.shared.start()
+        AppUpdater.shared.start()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
     }
