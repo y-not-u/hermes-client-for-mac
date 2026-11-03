@@ -13,17 +13,12 @@ struct UpdateSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Toggle("自动检查更新", isOn: Binding(
-                get: { updater.automaticallyChecksForUpdates },
-                set: { updater.setAutomaticallyChecksForUpdates($0) }))
-                .disabled(!updater.isAvailable)
-            HStack(alignment: .top, spacing: 12) {
-                Text(updater.isAvailable
-                     ? "从 GitHub Releases 检查新版本，安装前会征求你的确认。"
-                     : "开发构建不检查更新，请使用正式发布版。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 12) {
+                Toggle("自动检查更新", isOn: Binding(
+                    get: { updater.automaticallyChecksForUpdates },
+                    set: { updater.setAutomaticallyChecksForUpdates($0) }))
+                    .disabled(!updater.isAvailable)
+                Spacer()
                 Button("检查更新…") { updater.checkForUpdates() }
                     .disabled(!updater.canCheckForUpdates)
             }
