@@ -15,6 +15,8 @@ enum HermesRPCRequest {
     case setModel(profile: String, runtimeID: String, choice: ModelChoice, confirmed: Bool)
     case submitPrompt(profile: String, runtimeID: String, text: String, queued: Bool = false)
     case followUp(FollowUpMethod, profile: String, runtimeID: String, text: String)
+    case attach(profile: String, runtimeID: String, attachment: ComposerAttachment)
+    case detachImage(profile: String, runtimeID: String, path: String)
     case interrupt(profile: String, runtimeID: String)
     case approve(runtimeID: String, requestID: String, choice: String)
 
@@ -27,6 +29,8 @@ enum HermesRPCRequest {
         case .setModel: return "config.set"
         case .submitPrompt: return "prompt.submit"
         case .followUp(let method, _, _, _): return method.rawValue
+        case .attach(_, _, let attachment): return attachment.isImage ? "image.attach_bytes" : "file.attach"
+        case .detachImage: return "image.detach"
         case .interrupt: return "session.interrupt"
         case .approve: return "approval.respond"
         }
@@ -58,6 +62,20 @@ enum HermesRPCRequest {
         case .followUp(_, let profile, let runtimeID, let text):
             var params = Self.sessionParams(profile: profile, runtimeID: runtimeID)
             params["text"] = .string(text)
+            return params
+        case .attach(let profile, let runtimeID, let attachment):
+            var params = Self.sessionParams(profile: profile, runtimeID: runtimeID)
+            if attachment.isImage {
+                params["filename"] = .string(attachment.name)
+                params["content_base64"] = .string(attachment.data.base64EncodedString())
+            } else {
+                params["name"] = .string(attachment.name)
+                params["data_url"] = .string("data:\(attachment.mimeType);base64," + attachment.data.base64EncodedString())
+            }
+            return params
+        case .detachImage(let profile, let runtimeID, let path):
+            var params = Self.sessionParams(profile: profile, runtimeID: runtimeID)
+            params["path"] = .string(path)
             return params
         case .interrupt(let profile, let runtimeID):
             return Self.sessionParams(profile: profile, runtimeID: runtimeID)

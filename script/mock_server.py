@@ -27,6 +27,8 @@ class Fixture:
         self.counter = 0
         self.native = False
         self.create_delay = 0
+        self.attachment_error = None
+        self.attachment_delay = 0
         self.submit_delay = 0
         self.refreshes = 0
         self.tickets = 0
@@ -59,6 +61,8 @@ class Fixture:
             self.native = body.get('native', self.native)
             self.create_delay = body.get('create_delay', self.create_delay)
             self.submit_delay = body.get('submit_delay', self.submit_delay)
+            self.attachment_error = body.get('attachment_error', self.attachment_error)
+            self.attachment_delay = body.get('attachment_delay', self.attachment_delay)
             self.complete_on_resume = body.get('complete_on_resume', self.complete_on_resume)
             self.resume_delay = body.get('resume_delay', self.resume_delay)
             self.session_rows = body.get('session_rows', self.session_rows)
@@ -317,6 +321,16 @@ class Fixture:
             result = {'status': status, 'text': params['text']}
             if status != 'rejected':
                 session.setdefault('inflight', {}).setdefault('corrections', []).append(params['text'])
+        elif method in ('image.attach_bytes', 'file.attach', 'image.detach'):
+            await asyncio.sleep(self.attachment_delay)
+            if self.attachment_error == method:
+                await ws.send_json({'jsonrpc': '2.0', 'id': frame['id'], 'error': {'code': -32601, 'message': 'attachment unsupported'}})
+                return
+            if method == 'image.detach':
+                result = {'detached': True}
+            else:
+                result = {'attached': True, 'path': '/workspace/upload-' + str(len(self.requests)),
+                          'ref_text': '@file:"uploads/' + params.get('name', 'image.png') + '"'}
         elif method == 'prompt.submit':
             await asyncio.sleep(self.submit_delay)
             session = next(s for s in self.sessions.values() if s['session_id'] == params['session_id'])
@@ -335,7 +349,7 @@ class Fixture:
     async def websocket(self, request):
         if request.query.get('token') != 'fixture-token' and request.query.get('ticket') != 'fixture-ticket':
             return web.Response(status=401)
-        ws = web.WebSocketResponse()
+        ws = web.WebSocketResponse(max_msg_size=48 * 1024 * 1024)
         await ws.prepare(request)
         self.sockets.add(ws)
         tasks = set()

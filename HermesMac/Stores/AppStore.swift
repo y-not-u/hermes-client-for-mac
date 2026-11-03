@@ -19,6 +19,32 @@ import AppKit
     var listLoading = false
     var listHasMore: [String: Bool] = [:]
     var draft = "" { didSet { persistDraft() } }
+    private var attachmentDrafts: [ModelPickerContext: [ComposerAttachment]] = [:]
+    private var uploadingAttachments: Set<ModelPickerContext> = []
+    var draftAttachments: [ComposerAttachment] { attachmentDrafts[modelContext] ?? [] }
+    var sendingAttachments: Bool { uploadingAttachments.contains(modelContext) }
+
+    func addAttachments(_ attachments: [ComposerAttachment]) {
+        guard connected, current?.readOnlyReason == nil, !sendingAttachments else { return }
+        let combined = draftAttachments + attachments
+        guard combined.count <= ComposerAttachment.maxCount,
+              combined.reduce(0, { $0 + $1.data.count }) <= ComposerAttachment.maxTotalBytes else {
+            error = "最多添加 8 个附件，总大小不能超过 32 MB"
+            return
+        }
+        attachmentDrafts[modelContext] = combined
+    }
+
+    func removeAttachment(_ id: UUID) {
+        guard !sendingAttachments else { return }
+        attachmentDrafts[modelContext]?.removeAll { $0.id == id }
+    }
+
+    private func moveAttachments(from source: ModelPickerContext, to target: ModelPickerContext) {
+        guard source != target, let attachments = attachmentDrafts.removeValue(forKey: source) else { return }
+        attachmentDrafts[target, default: []].append(contentsOf: attachments)
+    }
+
     let models = ModelCatalogStore()
     var modelCatalogs: [ModelPickerContext: ModelCatalog] { models.catalogs }
     var modelErrors: [ModelPickerContext: String] { models.errors }
@@ -103,7 +129,8 @@ import AppKit
     }
     var profileTitle: String { profiles.first(where: { $0.name == selectedProfile })?.displayName ?? "Hermes" }
     var canSend: Bool {
-        connected && !selectedProfile.isEmpty && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        connected && !selectedProfile.isEmpty && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draftAttachments.isEmpty)
+        && !sendingAttachments && (draftAttachments.isEmpty || current?.generating != true)
         && !(currentKey.map { sendingSessions.contains($0) } ?? (creatingSessions[navigation] != nil))
         && !modelSwitching.contains(selectedProfile) && current?.readOnlyReason == nil && current?.loading != true
         && (selectedSession == nil || current != nil)
@@ -244,6 +271,7 @@ import AppKit
                         $0.drafts.removeValue(forKey: LocalState.draftKey(profile: profile, session: nil))
                     }
                     selectedSession = id
+                    moveAttachments(from: startingContext, to: modelContext)
                     models.copyCatalog(from: startingContext, to: modelContext)
                 }
             }
@@ -604,10 +632,18 @@ import AppKit
             return
         }
         let profile = selectedProfile; let text = draft; let epoch = generation; let startingSession = selectedSession; let originNavigation = navigation
+        let sourceContext = modelContext
+        let attachments = draftAttachments
+        var attachmentContext = sourceContext
+        var attachedImagePaths: [String] = []
+        var attachmentConversation: Conversation?
+        var submitted = false
+        if !attachments.isEmpty { uploadingAttachments.insert(sourceContext) }
         var sendingKey = currentKey
         if let sendingKey { sendingSessions.insert(sendingKey) }
         else { creatingSessions[originNavigation] = profile }
         defer {
+            uploadingAttachments.remove(attachmentContext)
             if epoch == generation {
                 if let sendingKey { sendingSessions.remove(sendingKey) }
                 creatingSessions.removeValue(forKey: originNavigation)
@@ -633,13 +669,60 @@ import AppKit
                 let draftKey = LocalState.draftKey(profile: profile, session: startingSession)
                 let pendingDraft = local.state(service).drafts[draftKey] ?? ""
                 if navigation == originNavigation {
-                    local.update(service) { $0.drafts[LocalState.draftKey(profile: profile, session: id)] = pendingDraft == text ? "" : pendingDraft }
+                    local.update(service) { $0.drafts[LocalState.draftKey(profile: profile, session: id)] = attachments.isEmpty && pendingDraft == text ? "" : pendingDraft }
                     if selectedProfile == profile && selectedSession == startingSession { selectedSession = id }
                 }
             }
+            attachmentConversation = c
+            let targetContext = ModelPickerContext(service: c.key.service, profile: profile, sessionID: c.key.storedID)
+            if targetContext != sourceContext { uploadingAttachments.remove(sourceContext) }
+            attachmentContext = targetContext
+            if navigation == originNavigation {
+                moveAttachments(from: sourceContext, to: attachmentContext)
+            }
+            if !attachments.isEmpty { uploadingAttachments.insert(attachmentContext) }
             guard let runtime = c.runtimeID, !runtime.isEmpty else { throw ClientError(message: "会话未恢复，请重连后再发送") }
-            c.begin(text)
+            var promptParts = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] : [text]
+            for attachment in attachments {
+                let response: JSON
+                do {
+                    response = try await client.execute(.attach(profile: profile, runtimeID: runtime, attachment: attachment))
+                } catch {
+                    // A transport failure may have staged an image without returning its path.
+                    if attachment.isImage && (error as? ClientError)?.rpcCode == nil && epoch == generation {
+                        c.uncertain = true
+                        c.error = "附件上传结果未知，请重新查询会话状态后再发送。"
+                    }
+                    throw error
+                }
+                if attachment.isImage, !response["path"].string.isEmpty { attachedImagePaths.append(response["path"].string) }
+                guard epoch == generation else { throw CancellationError() }
+                guard response["attached"].bool else { throw ClientError(message: "服务未确认附件上传：\(attachment.name)") }
+                if attachment.isImage {
+                    guard !response["path"].string.isEmpty else {
+                        c.uncertain = true
+                        throw ClientError(message: "服务未返回图片附件路径，请重新查询会话状态")
+                    }
+                    promptParts.append("[User attached image: \(attachment.name)]")
+                } else {
+                    guard !response["ref_text"].string.isEmpty else { throw ClientError(message: "服务未返回文件引用：\(attachment.name)") }
+                    promptParts.append(response["ref_text"].string)
+                }
+            }
+            let prompt = attachments.isEmpty ? text : promptParts.joined(separator: "\n\n")
+            c.begin(prompt)
+            submitted = true
+            let sentIDs = Set(attachments.map(\.id))
+            attachmentDrafts[attachmentContext]?.removeAll { sentIDs.contains($0.id) }
+            if attachmentContext != sourceContext && navigation != originNavigation {
+                // If the user navigated away to create a new session draft while uploading,
+                // do not purge the newly added attachments in sourceContext.
+            } else {
+                attachmentDrafts[sourceContext]?.removeAll { sentIDs.contains($0.id) }
+            }
             local.update(service) {
+                let targetKey = LocalState.draftKey(profile: profile, session: c.key.storedID)
+                if $0.drafts[targetKey] == text { $0.drafts[targetKey] = "" }
                 let key = LocalState.draftKey(profile: profile, session: startingSession)
                 if (startingSession != nil || navigation == originNavigation || selectedProfile != profile),
                    $0.drafts[key] == text { $0.drafts[key] = "" }
@@ -647,9 +730,29 @@ import AppKit
             if navigation == originNavigation && selectedProfile == profile && selectedSession == c.key.storedID {
                 if draft == text { draft = "" } else { persistDraft() }
             }
-            do { _ = try await client.execute(.submitPrompt(profile: profile, runtimeID: runtime, text: text)) }
+            do { _ = try await client.execute(.submitPrompt(profile: profile, runtimeID: runtime, text: prompt)) }
             catch { guard epoch == generation else { return }; c.uncertain = true; c.error = "发送结果未知：\(error.localizedDescription)。请重新查询状态，不会自动重发。" }
-        } catch { guard epoch == generation else { return }; self.error = error.localizedDescription }
+        } catch {
+            // Roll back staged images if no prompt was attempted. Files are inert until referenced.
+            if !submitted, let c = attachmentConversation, !attachedImagePaths.isEmpty {
+                if let runtime = c.runtimeID {
+                    for path in attachedImagePaths {
+                        do { _ = try await client.execute(.detachImage(profile: profile, runtimeID: runtime, path: path)) }
+                        catch {
+                            if epoch == generation {
+                                c.uncertain = true
+                                c.error = "图片附件清理结果未知，请重新查询会话状态。"
+                            }
+                        }
+                    }
+                } else if epoch == generation {
+                    c.uncertain = true
+                    c.error = "连接已中断，图片附件清理结果未知，请重新查询会话状态。"
+                }
+            }
+            guard epoch == generation else { return }
+            self.error = error.localizedDescription
+        }
     }
     private func flushFrames() {
         flushTask?.cancel(); flushTask = nil
@@ -843,6 +946,7 @@ import AppKit
     }
     func removeSession(_ row: SessionSummary, archive: Bool, profile: String, service expectedService: String) async {
         guard expectedService == service, let client, canRemoveSession(row.id, profile: profile) else { return }
+        error = nil
         let epoch = generation
         let key = ConversationKey(service: expectedService, profile: profile, storedID: row.id)
         sessionMutations.insert(key)

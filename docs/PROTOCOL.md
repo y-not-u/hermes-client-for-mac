@@ -8,6 +8,8 @@
 
 每次操作先 GET `/api/sessions/{storedID}/mutation-snapshot?profile=…`，读取 `runtime_revision` 与非空的 `runtime_generation`。PATCH body 或 DELETE query 携带唯一 `request_id`、`expected_revision` 及可用的 `expected_generation`，使用与快照相同的 profile。只有快照接口返回 404/405 时使用旧请求格式；认证、服务异常或无效快照不触发旧格式写入。版本冲突不自动刷新快照或重发，保留本地会话状态并提示用户刷新后重试。此源码对照不等于真实服务操作验证。
 
+已知后端兼容问题：`4d043038` 的历史元数据授权未包含旧客户端使用的 `source=dashboard`，可能出现快照 `exists=true`、PATCH 却返回 404 `not_found`。这是服务端历史来源判定问题；当前实机使用 [后端兼容补丁](patches/hermes-dashboard-history-control.patch)，保留原有用户归属检查，客户端不会绕过服务端授权。实机验证见 [VALIDATION.md](VALIDATION.md)。
+
 ## HTTP
 
 | 接口 | 用途与归属 |
@@ -126,3 +128,16 @@
 同一 RPC transport 的观看流重连可以保留 viewer 身份。RPC 断线后 viewer 需重新签发，旧 human lease 仍由服务保留；用户需明确确认「接管」恢复控制权，再交还。不自动用 `force` 清理旧 lease。切换 profile 或服务、关闭面板/主窗口、正常退出会尝试释放本人控制权；退出最多等待 3 秒，超时不声称释放成功。
 
 显示层是原生 SwiftUI 外壳和 WKWebView 的本地 `hermes-botscreen://viewer/` 资源。noVNC 1.6.0 及 pako 固定版本离线打包，许可证和下载校验在 `Resources/BotScreen/VENDOR.md`。页面只加载本地模块，禁止外部导航和来自其他 frame/origin 的消息；票据 URL 不写日志，显示错误不包含 WebSocket 的原始地址。
+
+
+## 输入框粘贴附件
+
+输入框使用原生 `NSTextView` 的粘贴入口与可读剪贴板类型，支持 ⌘V 和系统粘贴命令。Finder 文件 URL 优先于同一剪贴板的缩略图/文字表示；剪贴板 PNG 直接使用，TIFF 转为 PNG。普通文字继续走系统文本粘贴，附件不会替换已输入文字。附件列表提供图片缩略图、文件名、大小与移除按钮；支持不输入文字只发附件。单文件上限 10 MB，每份草稿最多 8 个附件、合计 32 MB；文件夹报错，整次粘贴不会部分加入。
+
+附件字节在粘贴时复制到内存，按 `(service, profile, storedID?)` 隔离，切换会话可以取回，创建会话或选择模型创建会话时一同迁移。未发送附件不跨应用重启保存。发送前先创建/恢复会话，再逐项调用：
+
+- 图片：`image.attach_bytes {profile, session_id: runtimeID, filename, content_base64}`。要求响应 `attached=true` 和 `path`；服务端将图片加入下一轮多模态输入。支持 PNG/JPEG/GIF/WebP/BMP；其他格式的文件走普通文件附件。
+- 文件（含 PDF）：`file.attach {profile, session_id: runtimeID, name, data_url}`。要求响应 `attached=true` 和 `ref_text`；把服务返回的 `@file:` 引用追加到消息正文，不把本机路径当作远程路径。
+- 全部附件确认后调用普通 `prompt.submit`。带附件时等待当前回复结束后才允许发送，避免与 `session.steer` 的文字补充混用。上传部分失败时保留文字与附件，已确认暂存的图片通过 `image.detach {profile, session_id, path}` 清理；上传/清理结果不确定时标记会话状态待确认，不自动重发。
+
+方法契约对照官方 [methods_prompt.py](https://github.com/NousResearch/hermes-agent/blob/c57331677d7fc46298a7159cf3a650853f0966c5/tui_gateway/methods_prompt.py) 的 `image.attach_bytes`、`file.attach`、`image.detach`。服务不支持附件方法时显示错误并保留草稿，不回退为发送本机路径。模拟服务验证不等于真实服务的文件处理或模型视觉能力验收。

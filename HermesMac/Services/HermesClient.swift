@@ -1,6 +1,8 @@
 import Foundation
+import OSLog
 
 @MainActor final class HermesClient: HermesRPCExecuting {
+    private let mutationLogger = Logger(subsystem: "com.hermes.mac", category: "SessionMutation")
     let baseURL: URL
     let service: String
     private var credentials: Credentials
@@ -90,6 +92,7 @@ import Foundation
         do {
             snapshot = try await rest(path + "/mutation-snapshot", query: [URLQueryItem(name: "profile", value: profile)])
         } catch let error as ClientError where [404, 405].contains(error.httpStatus ?? 0) {
+            mutationLogger.info("Session snapshot route unavailable: HTTP \(error.httpStatus ?? 0)")
             snapshot = nil
         }
         if let snapshot {
@@ -99,6 +102,7 @@ import Foundation
                   revision.isFinite, revision >= 0, revision.rounded() == revision else {
                 throw ClientError(message: "会话版本快照无效，请检查 Hermes 后端版本")
             }
+            mutationLogger.info("Session snapshot read: exists=\(exists), revision=\(revision)")
             guard exists else { throw ClientError(message: "会话已不存在，请刷新列表", httpStatus: 404) }
             identity = ["request_id": .string(UUID().uuidString), "expected_revision": .number(revision)]
             if snapshot["runtime_generation"] != .null {
@@ -125,7 +129,9 @@ import Foundation
                 }
                 _ = try await rest(path, method: "DELETE", query: query)
             }
-        } catch let error as ClientError where error.httpStatus == 409 {
+        } catch let error as ClientError {
+            mutationLogger.error("Session mutation failed: method=\(changes == nil ? "DELETE" : "PATCH", privacy: .public), HTTP \(error.httpStatus ?? 0), snapshot=\(snapshot != nil)")
+            guard error.httpStatus == 409 else { throw error }
             throw ClientError(message: "会话修改被拒绝，可能已发生变化或正在使用中；请刷新后重试。\(error.message)", httpStatus: 409)
         }
     }

@@ -203,3 +203,33 @@ HERMES_LIVE_SERVER='<自行填写已授权服务地址>' HERMES_LIVE_CHAT=1 swif
 - `./script/build_and_run.sh --verify`：Debug 签名构建与启动进程检查通过。`git diff --check` 通过。
 - 原临时 Python 环境的 Python 3.15 ensurepip 失败，使用 Python 3.14 创建独立临时测试环境后通过。日志：`/tmp/hermes-session-mutation-tests.log`、`/tmp/hermes-mac-build.log`。
 - 未在真实服务修改用户会话；真实归档、删除、重命名仍需人工验收。
+
+
+### 后续实机排查：airelay 归档仍返回 404
+
+用户报告 airelay profile 所有会话归档失败。通过开发版 `SessionMutation` 统一日志确认，原报错会话的快照读取成功（`exists=true`、revision 0），随后的 PATCH 返回 HTTP 404 `not_found`。参考官方 `tests/gateway/test_multiplex_cold_profile_sidebar_mutation.py`，为 PATCH 的 query 同时补齐与 body 一致的 profile 后重建、启动，并在同一会话复测，仍返回 404；因此不能将缺少 query 认定为该故障的根因或声称已修复。会话仍保留在列表中。
+
+诊断日志仅记录快照是否存在、revision、修改方法和 HTTP 状态，不含令牌、会话标题、消息或服务地址。`HERMES_TEST_VENV=/tmp/hermes-session-mutation-venv ./script/test.sh`：139 项、1 项 opt-in live test 跳过、0 失败；`./script/build_and_run.sh --verify` 构建与启动通过。尚需真实后端的 revision、启动方式与归档服务端日志，以区分快照数据库与 Gateway 写入路由/存储不一致等可能原因。日志在 `/tmp/hermes-archive-404-runtime.log`，测试日志在 `/tmp/hermes-archive-404-tests.log`。
+
+
+### SSH 后端修复与真实归档验收
+
+通过已授权的 `ssh hermes` 检查，服务端源码基于 `4d04303818b61bf3aa09278af48356315515965b`，独立 dashboard 转发修改到运行中的 Gateway。原报错会话来源为 `dashboard`，没有 chat/session 路由；`hermes_state_mutation_binding._history_sources()` 未包含此来源，`authorize_history()` 返回 False，随后 API 会话恢复因没有对应绑定而返回 `not_found`。补齐 PATCH query 的试验无效，已撤回客户端该项改动。
+
+后端将 `dashboard` 纳入可做元数据修改的历史来源，保留登录用户、已有归属绑定及路由检查。真实会话只读验证：补丁前其对应登录的 `authorize_history=False`；补丁后 True，其他用户仍返回 `permission_denied`。运行正常的 `hermes gateway restart`，等待现有工作结束并完成服务恢复，没有使用强制中断参数。
+
+从开发版界面重新归档原报错的 evoxt 会话成功：会话从列表消失；只读数据库验证 `archived=1`、`runtime_revision=1`，39 条消息保留。客户端另在归档/删除开始时清理上一条失败提示，避免成功后仍显示旧的 404。开发版已重建、启动，界面无旧错误。
+
+- 客户端完整测试：139 项、138 通过、1 项 opt-in live test 跳过、0 失败。日志 `/tmp/hermes-archive-verified-tests.log`。
+- 后端针对性回归：`tests/hermes_state/test_history_login_label.py` 18 项通过，含 dashboard 来源本人可修改、其他用户被拒绝；加上 HTTP/WS 修改协议的 2 项检查共 20 项通过。使用 PM 构建独立测试环境，通过官方 `scripts/run_tests.sh`，并以 `-k "not test_http_import_and_delete_keep_atomic_receipts"` 排除下述环境失败用例。日志 `/tmp/hermes-dashboard-history-focused-tests.log`。
+- 扩展后端检查未全通过：HTTP import/delete 测试被真实 home I/O 防护阻止读取部署目录旁的 `manifest.json`；cold-import 集成测试因临时 Gateway 仍在准备依赖而未在启动时限内就绪。日志 `/tmp/hermes-dashboard-history-tests.log`；未放宽这些测试保护或调整真实用户配置。
+- 部署的后端源码/测试补丁保存于 [patches/hermes-dashboard-history-control.patch](patches/hermes-dashboard-history-control.patch)，适用于上述后端基线；是当前机器本地兼容修复，尚未推送上游。
+
+## 2026-11-03 输入框粘贴图片和文件
+
+- `./script/test.sh`：146 项，145 通过、1 项 opt-in live test 跳过、0 失败。日志 `/tmp/hermes-paste-full.log`。
+- 新增 `ComposerAttachmentTests` 7 项：原生粘贴与禁用编辑器、PNG/TIFF、普通文字不识别为附件、Finder 文件 URL 与文件夹拒绝、大小/数量限制、服务与角色隔离、纯附件发送、图片/文件上传先于 prompt、部分失败清理、上传期间新草稿隔离与原会话路由。
+- 上传切换回归曾发现来源为新会话草稿的上传锁错误影响下一份新草稿；已将上传锁随创建完成的目标会话迁移，完整重跑通过。
+- `./script/build_and_run.sh --build`：Debug 签名构建通过，日志 `/tmp/hermes-mac-build.log`。`git diff --check` 通过。
+- 已启动隔离模拟服务窗口检查基本连接；完整 Finder→输入框的界面粘贴与缩略图布局未完成人工验收，不作为已验证项。未向真实服务上传或发送附件，模型视觉输入及真实文件读取仍需人工验收。
+- 手动验收：复制截图后在输入框 ⌘V；从 Finder 复制图片及多个普通文件后粘贴；检查缩略图/名称与移除按钮；分别发送纯附件和文字加附件；等待生成结束后发送带附件草稿；切换会话后确认附件隔离。错误路径检查文件夹、超过 10 MB 文件与旧服务不支持附件方法时保留草稿。

@@ -353,6 +353,11 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         }
         stats = try await fixture(["action": .string("stats")])
         XCTAssertEqual(stats["session_writes"].array.count, 2)
+        _ = try await fixture(["action": .string("configure"), "session_write_error": .bool(false)])
+        await store.removeSession(row, archive: true, profile: "a", service: client.service)
+        XCTAssertNil(store.error)
+        stats = try await fixture(["action": .string("stats")])
+        XCTAssertTrue(stats["session_writes"].array.last?["body"]["archived"].bool == true)
     }
 
     func testSupplementKeepsStreamingWithoutRedirectingActiveRequest() async throws {

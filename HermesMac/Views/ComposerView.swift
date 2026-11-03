@@ -32,13 +32,14 @@ struct ComposerView: View {
                 }
                 .padding(.horizontal, 2)
                 // Keep the row's height stable while the user edits their draft.
-                .opacity(store.draft.isEmpty ? 1 : 0)
-                .allowsHitTesting(store.draft.isEmpty)
-                .accessibilityHidden(!store.draft.isEmpty)
+                .opacity(store.draft.isEmpty && store.draftAttachments.isEmpty ? 1 : 0)
+                .allowsHitTesting(store.draft.isEmpty && store.draftAttachments.isEmpty)
+                .accessibilityHidden(!store.draft.isEmpty || !store.draftAttachments.isEmpty)
             }
 
             // Input Card
             VStack(spacing: 6) {
+                attachmentStrip
                 ZStack(alignment: .topLeading) {
                     if store.draft.isEmpty {
                         Text(isEnabled ? (isRunning ? "补充要求或修改方向… (Enter 引导)" : "向 \(store.profileTitle) 发送消息… (Enter 发送)") : "当前连接不可用或处于只读状态")
@@ -49,7 +50,7 @@ struct ComposerView: View {
                             .allowsHitTesting(false)
                     }
 
-                    ComposerTextView(text: $store.draft, enabled: isEnabled, fontSize: ChatTypography.size(fontSize)) {
+                    ComposerTextView(text: $store.draft, enabled: isEnabled, fontSize: ChatTypography.size(fontSize), onPasteAttachments: store.addAttachments, onPasteError: { store.error = $0 }) {
                         store.submitDraft()
                     }
                     .frame(minHeight: max(38, ChatTypography.size(fontSize) + 18), maxHeight: 120)
@@ -91,6 +92,42 @@ struct ComposerView: View {
         .padding(.horizontal, 20)
         .padding(.bottom, 16)
         .padding(.top, 4)
+    }
+
+    @ViewBuilder private var attachmentStrip: some View {
+        if !store.draftAttachments.isEmpty {
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(store.draftAttachments) { attachment in
+                        HStack(spacing: 6) {
+                            if attachment.isImage, let image = NSImage(data: attachment.data) {
+                                Image(nsImage: image).resizable().scaledToFit().frame(width: 36, height: 36)
+                            } else {
+                                Image(systemName: "doc").frame(width: 28, height: 36)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(attachment.name).lineLimit(1)
+                                Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.data.count), countStyle: .file))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .font(.system(size: 11))
+                            .frame(maxWidth: 180, alignment: .leading)
+                            Button { store.removeAttachment(attachment.id) } label: { Image(systemName: "xmark.circle.fill") }
+                                .buttonStyle(.plain)
+                                .help("移除附件 \(attachment.name)")
+                                .disabled(store.sendingAttachments)
+                        }
+                        .padding(6)
+                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+                    }
+                }
+            }
+            .frame(height: 48)
+            if store.sendingAttachments || isRunning {
+                Text(store.sendingAttachments ? "正在上传附件…" : "附件将在当前回复结束后可发送")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var keyboardHints: some View {
@@ -203,6 +240,8 @@ struct ComposerTextView: NSViewRepresentable {
     @Binding var text: String
     let enabled: Bool
     var fontSize: CGFloat = CGFloat(ChatTypography.defaultSize)
+    var onPasteAttachments: ([ComposerAttachment]) -> Void = { _ in }
+    var onPasteError: (String) -> Void = { _ in }
     let onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -226,6 +265,9 @@ struct ComposerTextView: NSViewRepresentable {
         view.textContainer?.widthTracksTextView = true
         view.delegate = context.coordinator
         view.onSubmit = onSubmit
+        view.onPasteAttachments = onPasteAttachments
+        view.onPasteError = onPasteError
+        view.isEditable = enabled
         scroll.documentView = view
         return scroll
     }
@@ -245,6 +287,8 @@ struct ComposerTextView: NSViewRepresentable {
         }
         editor.isEditable = enabled
         editor.onSubmit = onSubmit
+        editor.onPasteAttachments = onPasteAttachments
+        editor.onPasteError = onPasteError
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -260,6 +304,49 @@ struct ComposerTextView: NSViewRepresentable {
 
 final class SubmitTextView: NSTextView {
     var onSubmit: (() -> Void)?
+    var onPasteAttachments: (([ComposerAttachment]) -> Void)?
+    var onPasteError: ((String) -> Void)?
+
+    override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
+        [.fileURL, .png, .tiff] + super.readablePasteboardTypes
+    }
+
+    override func readSelection(from pasteboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
+        if [.fileURL, .png, .tiff].contains(type) {
+            guard isEditable else { return false }
+            do {
+                let attachments = try ComposerAttachment.read(from: pasteboard)
+                if !attachments.isEmpty, let onPasteAttachments {
+                    onPasteAttachments(attachments)
+                    return true
+                }
+            } catch {
+                onPasteError?(error.localizedDescription)
+                return false
+            }
+        }
+        return super.readSelection(from: pasteboard, type: type)
+    }
+
+    override func paste(_ sender: Any?) {
+        paste(from: .general, sender: sender)
+    }
+
+    func paste(from pasteboard: NSPasteboard, sender: Any? = nil) {
+        guard isEditable else { return }
+        do {
+            let attachments = try ComposerAttachment.read(from: pasteboard)
+            if !attachments.isEmpty, let onPasteAttachments {
+                onPasteAttachments(attachments)
+                return
+            }
+        } catch {
+            onPasteError?(error.localizedDescription)
+            return
+        }
+        super.paste(sender)
+    }
+
     override func keyDown(with event: NSEvent) {
         if (event.keyCode == 36 || event.keyCode == 76) && !event.modifierFlags.contains(.shift) && !hasMarkedText() {
             onSubmit?()
