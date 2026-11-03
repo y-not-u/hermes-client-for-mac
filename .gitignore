@@ -7,5 +7,7 @@ xcuserdata/
 .DS_Store
 *.zip
 *.sha256
+*.p12
+*.pfx
 __pycache__/
 *.pyc

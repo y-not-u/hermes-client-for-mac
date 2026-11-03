@@ -1,5 +1,12 @@
 # 验证与人工验收
 
+## 2026-11-03 固定自签名发布身份
+
+- main/tag/手动发布改为从 Actions Secrets 导入固定 `.p12` 身份，按证书 SHA-1 指纹签名；缺少 secrets 时失败，PR 仅使用临时证书验证且不上传应用产物。
+- `python3 script/test_ci_signing.py`：5 项通过。使用临时测试证书和模拟的 security/sudo，覆盖两次发布选择相同身份、缺少 secret、密码错误、身份不可用、无发布 secrets 的 PR 分支，以及临时证书文件清理；没有导出或上传用户私钥，也没有改动本机钥匙串。
+- `HERMES_TEST_VENV=/tmp/hermes-mac-test-venv ./script/test.sh`：146 项，1 项 opt-in live test 跳过，0 失败。首次使用另一临时 Python 3.15 环境时 aiohttp 导入失败，换用已有可用环境后通过。日志 `/tmp/hermes-stable-signing-tests.log`。
+- Bash 语法、工作流 YAML 解析、`git diff --check` 通过。已将本机现有 Hermes 签名身份按证书指纹单独导出为加密 PKCS#12，并配置到 `y-not-u/hermes-client-for-mac` 的两个 Actions Secrets；导出密码随机生成，临时导出文件和密码文件已删除，原钥匙串身份保留。`gh secret list` 已确认两个名称存在。尚未推送工作流修改或运行真实 GitHub Actions；固定签名连续升级后的本地网络授权保留仍需实机验收。用户已确认重新开启本地网络权限后，当前正式版恢复连接。
+
 ## 证据分层
 
 2026-10-11 验证记录：`script/test.sh` 的 10 项本地模拟测试通过；10:04:42（Asia/Singapore）真实服务的 `LiveConnectionTests` 1 项测试通过。另有官方固定 revision 源码契约对照和 macOS 构建/启动验证。mock 使用 aiohttp，真实测试使用用户提供的局域网服务；两者的证据分开记录。

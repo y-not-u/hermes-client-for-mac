@@ -31,13 +31,24 @@ jobs:
 
       - name: Run Tests
         run: |
+          python3 script/test_ci_signing.py
           ./script/test.sh
 
       - name: Set up CI Signing
+        if: github.event_name != 'pull_request'
         timeout-minutes: 2
         # The helper authenticates its parent using the signing certificate.
-        # Ad hoc signing cannot satisfy that requirement.
-        # No stored certificate or secrets are needed for this disposable identity.
+        # Reuse the same identity across releases; never generate a replacement.
+        env:
+          HERMES_SIGNING_P12_BASE64: ${{ secrets.HERMES_SIGNING_P12_BASE64 }}
+          HERMES_SIGNING_P12_PASSWORD: ${{ secrets.HERMES_SIGNING_P12_PASSWORD }}
+        run: |
+          ./script/setup_ci_signing.sh
+
+      - name: Set up Pull Request Signing
+        if: github.event_name == 'pull_request'
+        timeout-minutes: 2
+        # Fork PRs have no release secrets. This identity is for validation only.
         run: |
           ./script/setup_ci_signing.sh
 
@@ -50,7 +61,7 @@ jobs:
             ARCHS="arm64 x86_64" \
             ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="HermesMac Local Development" \
+            CODE_SIGN_IDENTITY="$HERMES_SIGNING_IDENTITY" \
             build
 
       - name: Remove CI Signing Keychain
@@ -80,6 +91,7 @@ jobs:
           cat HermesMac.zip.sha256
 
       - name: Upload Build Artifacts
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: HermesMac-macOS

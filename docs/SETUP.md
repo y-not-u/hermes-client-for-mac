@@ -71,3 +71,26 @@ HTTP 局域网直连不加密凭据和聊天。若网络不能充分信任，请
 第一次升级到凭据组件时，现有 Keychain 项目可能需要一次授权。系统弹窗中的申请方应为 `HermesCredentialHelper`，请选择“始终允许”。以后普通界面重编译不需要再次授权；修改凭据组件本身、更新编译工具链或更换签名证书仍可能需要重新授权。拒绝访问或钥匙串锁定时，应用会显示读取失败，保留已有凭据，解锁/授权后重新连接即可。
 
 使用 `./script/build_and_run.sh` 或 Xcode 构建完整应用；`swift test` 用于测试，不应以未打包的 SwiftPM 可执行文件替代日常应用。
+
+## 无开发者账号的固定发布签名
+
+自用可复用一张自签名证书，无需付费 Apple Developer Program。`setup_local_signing.sh` 创建的证书有效期为 10 年；只要证书有效，持续使用同一证书及其私钥，保持正式版 bundle identifier 为 `com.hermes.mac`。证书名称相同不代表签名身份相同，不能每次构建重新生成。
+
+一次性配置：
+
+1. 在自己的 Mac 上运行 `./script/setup_local_signing.sh`。已有有效的 `HermesMac Local Development` 身份时脚本直接复用，不会重新生成。不要为导出方便删除或替换已有证书。
+2. 打开「钥匙串访问 → 登录 → 我的证书」，找到 `HermesMac Local Development`，确认可展开看到私钥。导出该身份为带密码的 `.p12`（同时包含证书和私钥），保存在仓库外并妥善备份。若无法导出，检查是否选中了包含私钥的身份。
+3. 在 GitHub 仓库的 Settings → Secrets and variables → Actions 添加两个 Repository secrets：`HERMES_SIGNING_P12_BASE64`（整个 `.p12` 文件的 Base64）和 `HERMES_SIGNING_P12_PASSWORD`（导出密码）。已配置 GitHub CLI 时也可在仓库目录执行以下命令，第二条交互输入密码：
+
+   ```sh
+   base64 -i /absolute/path/to/HermesMac-signing.p12 | gh secret set HERMES_SIGNING_P12_BASE64
+   gh secret set HERMES_SIGNING_P12_PASSWORD
+   ```
+
+4. 触发 main/tag 构建或 workflow_dispatch。CI 将身份导入临时钥匙串，使用证书指纹选择签名身份，并为主应用和凭据组件签名。每次日志的 `Signing certificate SHA-1` 应一致。构建结束删除临时钥匙串；保留在 GitHub Secrets 中的身份供后续版本复用。
+
+main/tag/手动构建缺少任一 secret 时会失败，不再自动换用新证书。PR（包括 fork PR）仅使用临时身份做测试和构建检查，不注入发布私钥、不上传应用构建产物。若需要 PR 版本自用，在合并后构建固定签名版本。
+
+从旧的 CI 临时证书首次切换到固定证书，可能仍需重新开启一次「系统设置 → 隐私与安全性 → 本地网络」，并允许凭据组件访问原有 Keychain 项目。后续固定证书能消除每次换证书带来的身份变化，但不保证解决所有 macOS 本地网络授权问题；Apple 为可靠识别推荐 Apple 签发的身份，见 [TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)。自签名不提供 Apple 公证，也不会消除 Gatekeeper 提示。
+
+验收时连续构建两个版本，比较证书指纹及 `codesign -d -r- <app路径>` 的 designated requirement；升级后确认本地网络授权和 Keychain 访问可用。不要提交 `.p12`、私钥、导出密码或其 Base64；Base64 并非加密。
