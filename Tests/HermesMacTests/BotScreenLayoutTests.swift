@@ -53,6 +53,38 @@ import AppKit
         XCTAssertEqual(probes.computerCreationCount, 1)
     }
 
+    func testResizingPlacesExistingPanelsWithoutUpdatingTheirContent() async throws {
+        _ = NSApplication.shared
+        let state = SplitLayoutState()
+        let probes = SplitLayoutProbes()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: SplitLayoutRoot(state: state, probes: probes))
+        window.orderBack(nil)
+        defer { window.close() }
+
+        for isOpen in [true, false] {
+            state.isOpen = isOpen
+            try await waitForLayout(window) {
+                abs((probes.chat?.bounds.width ?? 0) - (isOpen ? 399.5 : 800)) < 1
+            }
+            // Allow queued representable updates from changing the mode to finish.
+            try await Task.sleep(for: .milliseconds(40))
+            let updates = probes.contentBuildCount
+            for width: CGFloat in [900, 720, 1_100, 510, 800] {
+                window.setContentSize(NSSize(width: width, height: width / 2 + 200))
+                let expected = isOpen ? (width - 1) / 2 : width
+                try await waitForLayout(window) {
+                    abs((probes.chat?.bounds.width ?? 0) - expected) < 1
+                }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            XCTAssertEqual(probes.contentBuildCount, updates,
+                           "Resizing should only place panels, not update their content trees")
+        }
+    }
+
     private func waitForLayout(_ window: NSWindow, matching predicate: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(3)
         while Date() < deadline {
@@ -67,12 +99,14 @@ import AppKit
 
 @MainActor private final class SplitLayoutState: ObservableObject {
     @Published var expanded = false
+    @Published var isOpen = true
 }
 
 @MainActor private final class SplitLayoutProbes {
     var chat: NSView?
     var computer: NSView?
     var computerCreationCount = 0
+    var contentBuildCount = 0
 }
 
 @MainActor private struct SplitLayoutProbe: NSViewRepresentable {
@@ -98,9 +132,11 @@ import AppKit
     let probes: SplitLayoutProbes
 
     var body: some View {
-        ChatComputerSplit(isOpen: true, expanded: state.expanded) {
+        ChatComputerSplit(isOpen: state.isOpen, expanded: state.expanded) {
+            let _ = { probes.contentBuildCount += 1 }()
             SplitLayoutProbe(computer: false, probes: probes)
         } computer: {
+            let _ = { probes.contentBuildCount += 1 }()
             SplitLayoutProbe(computer: true, probes: probes)
         }
     }

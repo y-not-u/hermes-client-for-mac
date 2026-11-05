@@ -52,35 +52,37 @@ struct ChatComputerSplit<Chat: View, Computer: View>: View {
     @State private var dragOrigin: CGFloat?
 
     var body: some View {
-        GeometryReader { geometry in
-            let total = geometry.size.width
-            let dividerWidth: CGFloat = isOpen && !expanded ? 1 : 0
-            let available = max(0, total - dividerWidth)
-            let minimum = min(250, available / 2)
-            let normalChatWidth = min(max(available * fraction, minimum), available - minimum)
-            let chatWidth = !isOpen ? total : (expanded ? 0 : normalChatWidth)
-            HStack(spacing: 0) {
-                chat()
-                    .frame(width: chatWidth, height: geometry.size.height)
+        ChatComputerLayout(isOpen: isOpen, expanded: expanded, fraction: fraction) {
+            chat()
+                .clipped()
+                .opacity(isOpen && expanded ? 0 : 1)
+                .allowsHitTesting(!(isOpen && expanded))
+                .accessibilityHidden(isOpen && expanded)
+            if isOpen {
+                Divider()
+                computer()
                     .clipped()
-                    .opacity(isOpen && expanded ? 0 : 1)
-                    .allowsHitTesting(!(isOpen && expanded))
-                    .accessibilityHidden(isOpen && expanded)
-                if isOpen {
-                    Divider()
-                        .frame(width: dividerWidth)
-                        .overlay {
-                            Color.clear.frame(width: 9).contentShape(Rectangle())
-                                .gesture(DragGesture(minimumDistance: 0)
-                                    .onChanged { value in
-                                        guard !expanded, available > 0 else { return }
-                                        if dragOrigin == nil { dragOrigin = fraction }
-                                        fraction = min(1, max(0, (dragOrigin ?? fraction) + value.translation.width / available))
-                                    }
-                                    .onEnded { _ in dragOrigin = nil })
-                        }
-                        .opacity(expanded ? 0 : 1)
-                        .allowsHitTesting(!expanded)
+            }
+        }
+        .overlay {
+            // Only the divider's hit region reads geometry. Window resizing now
+            // places existing panels without rebuilding the chat/viewer trees.
+            GeometryReader { geometry in
+                if isOpen && !expanded {
+                    let widths = ChatComputerLayout.widths(total: geometry.size.width,
+                                                          isOpen: isOpen, expanded: expanded, fraction: fraction)
+                    Color.clear
+                        .frame(width: 9, height: geometry.size.height)
+                        .contentShape(Rectangle())
+                        .position(x: widths.chat + 0.5, y: geometry.size.height / 2)
+                        .gesture(DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                let available = max(0, geometry.size.width - 1)
+                                guard available > 0 else { return }
+                                if dragOrigin == nil { dragOrigin = fraction }
+                                fraction = min(1, max(0, (dragOrigin ?? fraction) + value.translation.width / available))
+                            }
+                            .onEnded { _ in dragOrigin = nil })
                         .accessibilityLabel("调整聊天与电脑宽度")
                         .accessibilityAdjustableAction { direction in
                             switch direction {
@@ -89,11 +91,44 @@ struct ChatComputerSplit<Chat: View, Computer: View>: View {
                             @unknown default: break
                             }
                         }
-                    computer()
-                        .frame(width: max(0, total - chatWidth - dividerWidth), height: geometry.size.height)
-                        .clipped()
                 }
             }
+        }
+    }
+}
+
+/// Size proposals belong in Layout, so changing the window frame does not
+/// reevaluate the view builders for the entire eager transcript on every step.
+struct ChatComputerLayout: Layout {
+    let isOpen: Bool
+    let expanded: Bool
+    let fraction: CGFloat
+
+    static func widths(total: CGFloat, isOpen: Bool, expanded: Bool, fraction: CGFloat)
+        -> (chat: CGFloat, divider: CGFloat, computer: CGFloat) {
+        let total = max(0, total)
+        guard isOpen else { return (total, 0, 0) }
+        guard !expanded else { return (0, 0, total) }
+        let divider = min(1, total)
+        let available = total - divider
+        let minimum = min(250, available / 2)
+        let chat = min(max(available * fraction, minimum), available - minimum)
+        return (chat, divider, available - chat)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions(by: CGSize(width: 800, height: 600))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let widths = Self.widths(total: bounds.width, isOpen: isOpen, expanded: expanded, fraction: fraction)
+        let sizes = [widths.chat, widths.divider, widths.computer]
+        var x = bounds.minX
+        for (index, view) in subviews.enumerated() {
+            let width = sizes[index]
+            view.place(at: CGPoint(x: x, y: bounds.minY), anchor: .topLeading,
+                       proposal: ProposedViewSize(width: width, height: bounds.height))
+            x += width
         }
     }
 }

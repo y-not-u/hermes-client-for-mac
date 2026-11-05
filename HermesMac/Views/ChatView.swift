@@ -275,210 +275,208 @@ struct ChatView: View {
                 .padding(.top, 10)
             }
 
-            GeometryReader { viewport in
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        // Rows change height when media loads. A lazy stack combined
-                        // with bottom anchoring can repeatedly revise its estimated
-                        // heights on macOS 15 and starve the main actor (including
-                        // the image-loading tasks). History is paged, so measure the
-                        // loaded rows directly instead.
-                        VStack(alignment: .leading, spacing: 20) {
-                            if c.hasOlder {
-                                HStack {
-                                    Spacer()
-                                    Button("加载更早消息") {
-                                        Task { await store.loadOlder(c) }
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                    .disabled(c.loading)
-                                    Spacer()
+            ScrollViewReader { proxy in
+                ScrollView {
+                    // Rows change height when media loads. A lazy stack combined
+                    // with bottom anchoring can repeatedly revise its estimated
+                    // heights on macOS 15 and starve the main actor (including
+                    // the image-loading tasks). History is paged, so measure the
+                    // loaded rows directly instead.
+                    VStack(alignment: .leading, spacing: 20) {
+                        if c.hasOlder {
+                            HStack {
+                                Spacer()
+                                Button("加载更早消息") {
+                                    Task { await store.loadOlder(c) }
                                 }
-                                .padding(.top, 8)
-                            }
-
-                            let rows = transcriptRows(c)
-                            ForEach(rows) { row in
-                                MessageRowView(
-                                    message: row.message,
-                                    profileName: store.selectedProfile,
-                                    profileTitle: store.profileTitle,
-                                    tools: row.tools,
-                                    isRunning: c.generating && row.id == rows.last?.id,
-                                    conversation: c.key,
-                                    store: store,
-                                    previewImage: { file, filename in imagePreview = ImagePreview(file: file, filename: filename) }
-                                )
-                            }
-
-                            ForEach(c.approvals) { approval in
-                                ApprovalCard(approval: approval, conversation: c, store: store)
-                            }
-
-                            ForEach(c.clarifyRequests) { request in
-                                ClarifyCard(request: request, conversation: c, store: store)
-                            }
-
-                            if let error = c.error, !c.uncertain {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "exclamationmark.circle.fill")
-                                        .foregroundStyle(.orange)
-                                    Text(error)
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(.orange)
-                                        .textSelection(.enabled)
-                                }
-                                .padding(10)
-                                .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            }
-
-                            if c.generating, rows.last?.message.role != "assistant" {
-                                HStack(alignment: .top, spacing: 10) {
-                                    ProfileAvatar(
-                                        name: store.selectedProfile,
-                                        displayName: store.profileTitle,
-                                        size: 28,
-                                        cornerRadius: 8
-                                    )
-                                    .padding(.top, 2)
-
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        HStack(spacing: 8) {
-                                            Text(store.profileTitle)
-                                                .font(.system(size: 13, weight: .semibold))
-
-                                            Text("AI 助手")
-                                                .font(.system(size: 9.5, weight: .medium))
-                                                .foregroundStyle(.secondary)
-                                                .padding(.horizontal, 5)
-                                                .padding(.vertical, 1.5)
-                                                .background(Color.secondary.opacity(0.08), in: Capsule())
-                                        }
-
-                                        HStack(spacing: 6) {
-                                            ProgressView()
-                                                .controlSize(.mini)
-                                            Text("正在生成回复…")
-                                                .font(.system(size: 12))
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 5)
-                                        .background(Color.secondary.opacity(0.06), in: Capsule())
-                                    }
-                                }
-                            }
-
-                            Color.clear.frame(height: 21)
-                                .id("bottom")
-                                .background {
-                                    GeometryReader { geometry in
-                                        Color.clear.preference(
-                                            key: ConversationBottomPreferenceKey.self,
-                                            value: geometry.frame(in: .named("conversationScroll")).maxY
-                                        )
-                                    }
-                                }
-                        }
-                        .padding(.horizontal, 24)
-                        .padding(.top, 20)
-                        .frame(maxWidth: 860)
-                        .frame(maxWidth: .infinity)
-                    }
-                    .coordinateSpace(name: "conversationScroll")
-                    .onPreferenceChange(ConversationBottomPreferenceKey.self) { bottom in
-                        // The bottom marker includes the transcript's trailing spacing.
-                        isAtBottom = bottom <= viewport.size.height + 4
-                    }
-                    .defaultScrollAnchor(.bottom)
-                    .cleanScrollBars()
-                    .overlay(alignment: .top) {
-                        if c.loading {
-                            ProgressView()
+                                .buttonStyle(.bordered)
                                 .controlSize(.small)
-                                .padding(8)
-                                .background(.regularMaterial, in: Capsule())
-                                .padding(.top, 8)
-                                .allowsHitTesting(false)
+                                .disabled(c.loading)
+                                Spacer()
+                            }
+                            .padding(.top, 8)
                         }
-                    }
-                    .overlay(alignment: .bottom) {
-                        if !isAtBottom {
-                            Button {
-                                withAnimation(.easeOut(duration: 0.2)) {
-                                    proxy.scrollTo("bottom", anchor: .bottom)
+
+                        let rows = transcriptRows(c)
+                        ForEach(rows) { row in
+                            MessageRowView(
+                                message: row.message,
+                                profileName: store.selectedProfile,
+                                profileTitle: store.profileTitle,
+                                tools: row.tools,
+                                isRunning: c.generating && row.id == rows.last?.id,
+                                conversation: c.key,
+                                store: store,
+                                previewImage: { file, filename in imagePreview = ImagePreview(file: file, filename: filename) }
+                            )
+                        }
+
+                        ForEach(c.approvals) { approval in
+                            ApprovalCard(approval: approval, conversation: c, store: store)
+                        }
+
+                        ForEach(c.clarifyRequests) { request in
+                            ClarifyCard(request: request, conversation: c, store: store)
+                        }
+
+                        if let error = c.error, !c.uncertain {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.circle.fill")
+                                    .foregroundStyle(.orange)
+                                Text(error)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.orange)
+                                    .textSelection(.enabled)
+                            }
+                            .padding(10)
+                            .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+
+                        if c.generating, rows.last?.message.role != "assistant" {
+                            HStack(alignment: .top, spacing: 10) {
+                                ProfileAvatar(
+                                    name: store.selectedProfile,
+                                    displayName: store.profileTitle,
+                                    size: 28,
+                                    cornerRadius: 8
+                                )
+                                .padding(.top, 2)
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack(spacing: 8) {
+                                        Text(store.profileTitle)
+                                            .font(.system(size: 13, weight: .semibold))
+
+                                        Text("AI 助手")
+                                            .font(.system(size: 9.5, weight: .medium))
+                                            .foregroundStyle(.secondary)
+                                            .padding(.horizontal, 5)
+                                            .padding(.vertical, 1.5)
+                                            .background(Color.secondary.opacity(0.08), in: Capsule())
+                                    }
+
+                                    HStack(spacing: 6) {
+                                        ProgressView()
+                                            .controlSize(.mini)
+                                        Text("正在生成回复…")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(Color.secondary.opacity(0.06), in: Capsule())
                                 }
-                            } label: {
-                                Image(systemName: "arrow.down")
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(Color.accentColor)
-                                    .frame(width: 32, height: 32)
-                                    .background(.regularMaterial, in: Circle())
-                                    .overlay(Circle().strokeBorder(Color.secondary.opacity(0.2)))
-                                    .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("滚动到底部")
-                            .help("滚动到底部")
-                            .onHover { hovered in
-                                guard hovered != isBottomButtonHovered else { return }
-                                isBottomButtonHovered = hovered
-                                if hovered { NSCursor.pointingHand.push() }
-                                else { NSCursor.pop() }
+                        }
+
+                        Color.clear.frame(height: 21)
+                            .id("bottom")
+                            .anchorPreference(key: ConversationBottomPreferenceKey.self, value: .bounds) { $0 }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 20)
+                    .frame(maxWidth: 860)
+                    .frame(maxWidth: .infinity)
+                }
+                .overlayPreferenceValue(ConversationBottomPreferenceKey.self) { anchor in
+                    // Resolve geometry in this small overlay, not around the
+                    // transcript. Only a change in bottom visibility updates state.
+                    GeometryReader { geometry in
+                        let atBottom = anchor.map { geometry[$0].maxY <= geometry.size.height + 4 } ?? true
+                        Color.clear
+                            .onChange(of: atBottom, initial: true) { _, value in
+                                if isAtBottom != value { isAtBottom = value }
                             }
-                            .onDisappear {
-                                if isBottomButtonHovered {
-                                    NSCursor.pop()
-                                    isBottomButtonHovered = false
-                                }
-                            }
-                            .padding(16)
-                        }
                     }
-                    .onChange(of: c.key, initial: true) { _, key in
-                        isAtBottom = true
-                        pendingInitialScroll = c.loading ? key : nil
-                        proxy.scrollTo("bottom", anchor: .bottom)
+                    .allowsHitTesting(false)
+                }
+                .defaultScrollAnchor(.bottom)
+                .cleanScrollBars()
+                .overlay(alignment: .top) {
+                    if c.loading {
+                        ProgressView()
+                            .controlSize(.small)
+                            .padding(8)
+                            .background(.regularMaterial, in: Capsule())
+                            .padding(.top, 8)
+                            .allowsHitTesting(false)
                     }
-                    .onChange(of: c.loading) { _, loading in
-                        // Only finish the opening scroll; paging older history must
-                        // leave the reader at their current position.
-                        if !loading && pendingInitialScroll == c.key {
-                            pendingInitialScroll = nil
-                            proxy.scrollTo("bottom", anchor: .bottom)
-                        }
-                    }
-                    .onChange(of: c.lastSubmittedMessageID) { _, _ in
-                        // Sending resumes following the conversation even when
-                        // the reader has scrolled up into earlier messages.
-                        isAtBottom = true
-                        proxy.scrollTo("bottom", anchor: .bottom)
-                    }
-                    .onChange(of: c.messages.count) { _, _ in
-                        if isAtBottom && c.generating && !c.loading && imagePreview == nil {
-                            proxy.scrollTo("bottom", anchor: .bottom)
-                        }
-                    }
-                    .onChange(of: c.toolCount) { _, _ in
-                        if isAtBottom && !c.loading && imagePreview == nil {
+                }
+                .overlay(alignment: .bottom) {
+                    if !isAtBottom {
+                        Button {
                             withAnimation(.easeOut(duration: 0.2)) {
                                 proxy.scrollTo("bottom", anchor: .bottom)
                             }
+                        } label: {
+                            Image(systemName: "arrow.down")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Color.accentColor)
+                                .frame(width: 32, height: 32)
+                                .background(.regularMaterial, in: Circle())
+                                .overlay(Circle().strokeBorder(Color.secondary.opacity(0.2)))
+                                .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("滚动到底部")
+                        .help("滚动到底部")
+                        .onHover { hovered in
+                            guard hovered != isBottomButtonHovered else { return }
+                            isBottomButtonHovered = hovered
+                            if hovered { NSCursor.pointingHand.push() }
+                            else { NSCursor.pop() }
+                        }
+                        .onDisappear {
+                            if isBottomButtonHovered {
+                                NSCursor.pop()
+                                isBottomButtonHovered = false
+                            }
+                        }
+                        .padding(16)
+                    }
+                }
+                .onChange(of: c.key, initial: true) { _, key in
+                    isAtBottom = true
+                    pendingInitialScroll = c.loading ? key : nil
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+                .onChange(of: c.loading) { _, loading in
+                    // Only finish the opening scroll; paging older history must
+                    // leave the reader at their current position.
+                    if !loading && pendingInitialScroll == c.key {
+                        pendingInitialScroll = nil
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }
+                }
+                .onChange(of: c.lastSubmittedMessageID) { _, _ in
+                    // Sending resumes following the conversation even when
+                    // the reader has scrolled up into earlier messages.
+                    isAtBottom = true
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+                .onChange(of: c.messages.count) { _, _ in
+                    if isAtBottom && c.generating && !c.loading && imagePreview == nil {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }
+                }
+                .onChange(of: c.toolCount) { _, _ in
+                    if isAtBottom && !c.loading && imagePreview == nil {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo("bottom", anchor: .bottom)
                         }
                     }
-                    .onChange(of: c.messages.last?.text) { _, _ in
-                        if isAtBottom && c.generating && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
-                    }
-                    .onChange(of: c.generating) { _, running in
-                        if isAtBottom && !running && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
-                    }
-                    .onChange(of: c.approvals.count) { _, _ in
-                        if isAtBottom && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
-                    }
-                    .onChange(of: c.clarifyRequests.count) { _, _ in
-                        if isAtBottom && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
-                    }
+                }
+                .onChange(of: c.messages.last?.text) { _, _ in
+                    if isAtBottom && c.generating && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
+                .onChange(of: c.generating) { _, running in
+                    if isAtBottom && !running && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
+                .onChange(of: c.approvals.count) { _, _ in
+                    if isAtBottom && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
+                .onChange(of: c.clarifyRequests.count) { _, _ in
+                    if isAtBottom && !c.loading && imagePreview == nil { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
             }
             .id(c.key)
@@ -487,9 +485,9 @@ struct ChatView: View {
 }
 
 private struct ConversationBottomPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
+    static var defaultValue: Anchor<CGRect>? = nil
 
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
         value = nextValue()
     }
 }

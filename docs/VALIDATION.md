@@ -264,3 +264,12 @@ HERMES_LIVE_SERVER='<自行填写已授权服务地址>' HERMES_LIVE_CHAT=1 swif
 - `./script/test.sh`：151 项，150 通过、1 项 opt-in live test 跳过、0 失败。日志 `/tmp/hermes-image-full.log`。初次针对性测试暴露测试自身的模拟请求序号计算错误，修正后完整套件通过。
 - `./script/build_and_run.sh --verify`：Debug 签名构建、开发版启动与进程检查通过。`git diff --check` 通过。日志 `/tmp/hermes-image-build.log`、`/tmp/hermes-mac-build.log`。
 - 本次未向真实模型发送测试图片；真实模型视觉回复仍待用户在 Hermes Dev 重新粘贴并发送验收。未修改或重启后端。
+
+## 2026-11-05 主窗口缩放布局优化
+
+- 主聊天／电脑分栏改用 SwiftUI `Layout` 接收尺寸提案并放置现有子视图；几何读取仅用于分隔线的拖动命中区域。调整窗口大小不再逐次调用聊天与电脑面板的内容构建闭包，电脑面板展开／还原仍保留 viewer 实例。
+- 聊天底部位置改用 anchor preference 在独立覆盖层中解析；移除包住整个消息列表的 `GeometryReader`。仅在底部可见性变化时写入状态，保留非懒加载消息布局以避免图片加载导致历史估算高度循环。
+- 新增真实 NSWindow 回归：电脑打开／关闭两种模式下连续改变宽高，面板内容构建次数保持不变；与 HEAD 旧分栏对照，旧实现同一组操作分别额外构建 14 次和 7 次，新实现均为 0。此数字是构建闭包调用次数，不是帧率或整体耗时测量。对照日志 `/tmp/hermes-resize-baseline.log`，修复后针对性日志 `/tmp/hermes-resize-focused.log`。
+- 新增真实聊天窗口回归：初次定位底部，上翻后流式追加不抢回阅读位置，缩窄窗口后仍保持上翻状态，手动回到底部后继续跟随流式文字；原电脑展开、窄窗口和 viewer 实例保留测试通过。
+- `./script/test.sh`：153 项，152 通过、1 项 opt-in live test 跳过、0 失败。日志 `/tmp/hermes-resize-full.log`。`./script/build_and_run.sh --verify`：Debug 签名构建、开发版启动与进程检查通过，构建日志 `/tmp/hermes-mac-build.log`。`git diff --check` 通过。
+- 尚未对用户原始长会话做人工连续拖动或帧率采样；原生文本仍需随实际宽度重新换行。人工验收可在 Hermes Dev 连续拖动窗口边缘，再分别检查上翻阅读、正在生成回复及打开电脑时的缩放体验。
