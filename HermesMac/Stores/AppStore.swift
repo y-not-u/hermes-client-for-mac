@@ -61,6 +61,7 @@ import AppKit
     @ObservationIgnored private let imageCache = RemoteImageCache()
     @ObservationIgnored private let makeClient: (String) throws -> HermesClient
     @ObservationIgnored private let isAppActive: @MainActor () -> Bool
+    @ObservationIgnored private let onApprovalRequested: @MainActor (ConversationKey, String, String) -> Void
     @ObservationIgnored private let onReplyCompleted: @MainActor (ConversationKey, String, String) -> Void
     private var generation = UUID()
     private var navigation = UUID()
@@ -111,12 +112,14 @@ import AppKit
     }
     init(local: LocalState? = nil, makeClient: ((String) throws -> HermesClient)? = nil,
          isAppActive: @escaping @MainActor () -> Bool = { NSApp?.isActive ?? true },
-         onReplyCompleted: @escaping @MainActor (ConversationKey, String, String) -> Void = { _, _, _ in }) {
+         onReplyCompleted: @escaping @MainActor (ConversationKey, String, String) -> Void = { _, _, _ in },
+         onApprovalRequested: @escaping @MainActor (ConversationKey, String, String) -> Void = { _, _, _ in }) {
         let state = local ?? LocalState()
         self.local = state; address = state.address
         self.makeClient = makeClient ?? { try HermesClient(address: $0) }
         self.isAppActive = isAppActive
         self.onReplyCompleted = onReplyCompleted
+        self.onApprovalRequested = onApprovalRequested
     }
     var service: String { client?.service ?? address }
     var currentKey: ConversationKey? { selectedSession.map { ConversationKey(service: service, profile: selectedProfile, storedID: $0) } }
@@ -611,6 +614,7 @@ import AppKit
         draft = draft.isEmpty ? text : draft + "\n\n" + text
     }
     private func bind(_ c: Conversation) {
+        notifyPendingApprovals(in: c)
         guard let id = c.runtimeID, !id.isEmpty else { return }; routes[id] = c.key
         for frame in earlyFrames.removeValue(forKey: id) ?? [] { route(frame) }
     }
@@ -1006,6 +1010,7 @@ import AppKit
         if frame["method"].string == "event" { applyEvent(type: params["type"].string, payload: params["payload"], to: c) }
         else if frame["method"].string == "approval" {
             if !c.approvals.contains(where: { $0.id == frame["id"].string }) { c.approvals.append(Approval(id: frame["id"].string, params: params)) }
+            notifyPendingApprovals(in: c)
         } else if frame["method"].string == "clarify" {
             guard let request = ClarifyRequest(frame) else {
                 let requestID = frame["id"].string; let client = client
@@ -1023,6 +1028,14 @@ import AppKit
             c.error = "此客户端尚不支持服务请求：\(frame["method"].string)"
         }
     }
+    func notifyPendingApprovals(in conversation: Conversation) {
+        let profile = profiles.first { $0.name == conversation.key.profile }?.displayName ?? conversation.key.profile
+        for approval in conversation.approvals {
+            guard conversation.notifiedApprovalIDs.insert(approval.id).inserted else { continue }
+            onApprovalRequested(conversation.key, profile, approval.params["description"].string)
+        }
+    }
+
     func applyEvent(type: String, payload: JSON, to conversation: Conversation) {
         let wasGenerating = conversation.generating
         let active = isAppActive()

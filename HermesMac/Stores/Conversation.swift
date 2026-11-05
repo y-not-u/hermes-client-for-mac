@@ -25,6 +25,7 @@ import Observation
         return result
     }
     var approvals: [Approval] = []
+    @ObservationIgnored var notifiedApprovalIDs: Set<String> = []
     var submittingApprovals: Set<String> = []
     var approvalErrors: [String: String] = [:]
     var clarifyRequests: [ClarifyRequest] = []

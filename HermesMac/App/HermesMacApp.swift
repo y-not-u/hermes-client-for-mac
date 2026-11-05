@@ -39,6 +39,8 @@ import OSLog
         _ = Self.instanceLock
         _store = State(initialValue: AppStore(onReplyCompleted: { _, profile, text in
             ReplyNotifications.shared.replyCompleted(profile: profile, text: text)
+        }, onApprovalRequested: { _, profile, description in
+            ReplyNotifications.shared.approvalRequested(profile: profile, description: description)
         }))
         #if DEBUG
         // Isolated UI acceptance: no real preferences or Keychain entries are read or changed.

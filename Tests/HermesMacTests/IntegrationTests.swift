@@ -31,7 +31,7 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         let (data, _) = try await URLSession.shared.data(for: request)
         return try JSONDecoder().decode(JSON.self, from: data)
     }
-    private func prepare() async throws -> (AppStore, HermesClient, UserDefaults, String) {
+    private func prepare(onApprovalRequested: @escaping @MainActor (ConversationKey, String, String) -> Void = { _, _, _ in }) async throws -> (AppStore, HermesClient, UserDefaults, String) {
         guard !address.isEmpty else { throw XCTSkip("Run script/test.sh to enable real URLSession protocol integration tests") }
         _ = try await fixture(["action": .string("reset")])
         let name = "HermesMacTests-" + UUID().uuidString
@@ -42,7 +42,7 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         let store = AppStore(local: local, makeClient: { requested in
             if requested == client.service { return client }
             return try HermesClient(address: requested, credentials: Credentials(sessionToken: "fixture-token"))
-        })
+        }, onApprovalRequested: onApprovalRequested)
         await store.connect()
         XCTAssertTrue(store.connected, store.error ?? "failed connection")
         return (store, client, defaults, name)
@@ -684,7 +684,8 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
     }
 
     func testConcurrentProfilesApprovalUnreadAndDraftIsolation() async throws {
-        let (store, client, defaults, name) = try await prepare()
+        var notifications: [ConversationKey] = []
+        let (store, client, defaults, name) = try await prepare(onApprovalRequested: { key, _, _ in notifications.append(key) })
         defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
         store.draft = "A question"
         await store.send()
@@ -704,6 +705,7 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         ])])
         try await eventually { store.profileApproval("a") }
         XCTAssertFalse(store.profileApproval("b"))
+        XCTAssertEqual(notifications, [a.key])
         XCTAssertEqual(store.current?.key, b.key)
         XCTAssertEqual(a.messages.last?.text, "A partial")
         await store.selectProfile("a")

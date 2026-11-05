@@ -84,6 +84,34 @@ import AppKit
         XCTAssertTrue(store.current === protected[0])
     }
 
+    func testApprovalNotificationsInForegroundAndBackgroundWithoutReplayDuplicates() {
+        var active = true
+        var notifications: [(ConversationKey, String, String)] = []
+        let store = AppStore(isAppActive: { active }, onApprovalRequested: { notifications.append(($0, $1, $2)) })
+        let c = Conversation(key: ConversationKey(service: "local", profile: "a", storedID: "stored"))
+        let request = JSON.object(["id": .string("approval-1"), "method": .string("approval"),
+            "params": .object(["description": .string("Run command")])])
+        let snapshot = JSON.object(["session_id": .string("runtime"), "open_requests": .array([request])])
+        c.snapshot(snapshot)
+        store.notifyPendingApprovals(in: c)
+        XCTAssertEqual(notifications.count, 1)
+        XCTAssertEqual(notifications.first?.0, c.key)
+        XCTAssertEqual(notifications.first?.1, "a")
+        XCTAssertEqual(notifications.first?.2, "Run command")
+
+        active = false
+        c.snapshot(snapshot)
+        store.notifyPendingApprovals(in: c)
+        XCTAssertEqual(notifications.count, 1, "Restoring the same pending approval must not notify again")
+        c.approvals.append(Approval(id: "approval-2", params: .object([:])))
+        store.notifyPendingApprovals(in: c)
+        XCTAssertEqual(notifications.count, 2)
+        XCTAssertEqual(notifications.last?.2, "")
+        c.approvals = []
+        store.notifyPendingApprovals(in: c)
+        XCTAssertEqual(notifications.count, 2)
+    }
+
     func testReplyNotificationsOnlyForSuccessfulBackgroundCompletion() {
         var active = true
         var replies: [(ConversationKey, String, String)] = []

@@ -18,27 +18,38 @@ import OSLog
     }
 
     func replyCompleted(profile: String, text: String) {
+        send(title: "\(profile) 回复已完成", text: text, fallback: "打开 Hermes 查看回复。", kind: "reply")
+    }
+
+    func approvalRequested(profile: String, description: String) {
+        send(title: "\(profile) 等待审批", text: description, fallback: "打开 Hermes 查看并处理审批请求。", kind: "approval")
+    }
+
+    private func send(title: String, text: String, fallback: String, kind: String) {
         guard Bundle.main.bundleURL.pathExtension == "app" else { return }
         let content = UNMutableNotificationContent()
-        content.title = "\(profile) 回复已完成"
+        content.title = title
         let preview = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-        content.body = preview.isEmpty ? "打开 Hermes 查看回复。" : String(preview.prefix(180))
+        content.body = preview.isEmpty ? fallback : String(preview.prefix(180))
+        content.userInfo = ["kind": kind]
         content.sound = .default
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         Task {
             let center = UNUserNotificationCenter.current()
             let settings = await center.notificationSettings()
-            guard settings.authorizationStatus == .authorized, !NSApp.isActive else { return }
+            guard settings.authorizationStatus == .authorized,
+                  kind == "approval" || !NSApp.isActive else { return }
             do { try await center.add(request) }
-            catch { logger.error("Reply notification failed: \(error.localizedDescription, privacy: .public)") }
+            catch { logger.error("Notification failed: \(error.localizedDescription, privacy: .public)") }
         }
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                            willPresent notification: UNNotification,
                                            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        let isApproval = notification.request.content.userInfo["kind"] as? String == "approval"
         Task { @MainActor in
-            completionHandler(NSApp.isActive ? [] : [.banner, .sound, .list])
+            completionHandler(isApproval || !NSApp.isActive ? [.banner, .sound, .list] : [])
         }
     }
 }
