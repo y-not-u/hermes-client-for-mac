@@ -308,9 +308,9 @@ private struct SessionCardItem: View {
                 in: RoundedRectangle(cornerRadius: 8, style: .continuous)
             )
             .overlay {
-                if replyStatus == .unread {
+                if replyStatus == .awaitingApproval || replyStatus == .unread {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(Color.orange.opacity(0.85), lineWidth: 1.5)
+                        .strokeBorder((replyStatus == .awaitingApproval ? Color.orange : Color.blue).opacity(0.85), lineWidth: 1.5)
                 } else if isSelected {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .strokeBorder(Color.accentColor.opacity(0.25), lineWidth: 1)
@@ -319,7 +319,7 @@ private struct SessionCardItem: View {
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityValue(replyStatus == .uncertain ? "待确认" : (replyStatus == .answering ? "回答中" : (replyStatus == .unread ? "回答已完成，未读" : "")))
+        .accessibilityValue(replyStatus.accessibilityValue)
         .onHover { isHovered = $0 }
         .contextMenu {
             Button(action: onTogglePin) {
@@ -395,11 +395,22 @@ private struct SessionReplyDot: View {
 
 /// Shared by the visible and background rows; selection never owns reply status.
 enum SessionReplyStatus: Equatable {
-    case idle, answering, uncertain, unread
+    case idle, answering, uncertain, unread, awaitingApproval
+
+    var accessibilityValue: String {
+        switch self {
+        case .idle: return ""
+        case .answering: return "回答中"
+        case .uncertain: return "待确认"
+        case .unread: return "回答已完成，未读"
+        case .awaitingApproval: return "等待审批"
+        }
+    }
 
     @MainActor static func status(for sessionID: String, in store: AppStore) -> SessionReplyStatus {
         let key = ConversationKey(service: store.service, profile: store.selectedProfile, storedID: sessionID)
         guard let conversation = store.conversations[key] else { return .idle }
+        if !conversation.approvals.isEmpty { return .awaitingApproval }
         if conversation.uncertain { return .uncertain }
         if conversation.generating { return .answering }
         return conversation.unread ? .unread : .idle

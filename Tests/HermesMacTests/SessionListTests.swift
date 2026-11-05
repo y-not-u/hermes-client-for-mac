@@ -108,6 +108,41 @@ import Observation
         XCTAssertEqual(SessionReplyStatus.status(for: "second", in: store), .idle)
     }
 
+    func testPendingApprovalTakesPriorityAndClearsWhenResolved() throws {
+        let name = "HermesApprovalRow-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = AppStore(local: LocalState(defaults: defaults))
+        store.selectedProfile = "profile"
+        store.selectedSession = "session"
+        let conversation = Conversation(key: ConversationKey(service: store.service, profile: "profile", storedID: "session"))
+        store.conversations[conversation.key] = conversation
+        conversation.generating = true
+
+        let changed = expectation(description: "Row observes approval request")
+        withObservationTracking {
+            _ = SessionReplyStatus.status(for: "session", in: store)
+        } onChange: { changed.fulfill() }
+        conversation.approvals = [Approval(id: "approval", params: .object([:]))]
+        wait(for: [changed], timeout: 1)
+        XCTAssertEqual(SessionReplyStatus.status(for: "session", in: store), .awaitingApproval)
+        conversation.uncertain = true
+        conversation.unread = true
+        XCTAssertEqual(SessionReplyStatus.status(for: "session", in: store), .awaitingApproval)
+
+        let resolved = expectation(description: "Row observes approval resolution")
+        withObservationTracking {
+            _ = SessionReplyStatus.status(for: "session", in: store)
+        } onChange: { resolved.fulfill() }
+        conversation.approvals = []
+        wait(for: [resolved], timeout: 1)
+        XCTAssertEqual(SessionReplyStatus.status(for: "session", in: store), .uncertain)
+        conversation.uncertain = false
+        XCTAssertEqual(SessionReplyStatus.status(for: "session", in: store), .answering)
+        conversation.apply(type: "message.complete", payload: .object(["text": .string("answer")]), visible: false)
+        XCTAssertEqual(SessionReplyStatus.status(for: "session", in: store), .unread)
+    }
+
     func testUnreadCompletionMarksRowUntilViewedOrNewReplyBegins() throws {
         let name = "HermesUnreadRow-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
