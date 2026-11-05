@@ -255,3 +255,12 @@ HERMES_LIVE_SERVER='<自行填写已授权服务地址>' HERMES_LIVE_CHAT=1 swif
 - `./script/build_and_run.sh --build`：Debug 签名构建通过，日志 `/tmp/hermes-mac-build.log`。`git diff --check` 通过。
 - 已启动隔离模拟服务窗口检查基本连接；完整 Finder→输入框的界面粘贴与缩略图布局未完成人工验收，不作为已验证项。未向真实服务上传或发送附件，模型视觉输入及真实文件读取仍需人工验收。
 - 手动验收：复制截图后在输入框 ⌘V；从 Finder 复制图片及多个普通文件后粘贴；检查缩略图/名称与移除按钮；分别发送纯附件和文字加附件；等待生成结束后发送带附件草稿；切换会话后确认附件隔离。错误路径检查文件夹、超过 10 MB 文件与旧服务不支持附件方法时保留草稿。
+
+## 2026-11-05 图片已上传但模型未收到
+
+- 通过 `ssh hermes` 只读核对部署源码 revision `b200f5bc60e31588ba2cb60e288029c4a54ba5fa`：`gateway/session_images.py` 的 `image.attach_bytes` 只暂存图片，返回 `path` 与 `mime`；`gateway/session_ingress_media.py` 要求 `prompt.submit.attachments: [{path, mime}]` 才将字节纳入本轮输入。客户端此前沿用旧版会话暂挂语义，提交时漏了该字段。
+- 客户端按上传响应的 `mime` 识别新版契约并携带图片引用；旧版无 `mime` 响应继续使用会话暂挂语义。新版提交前上传失败保留草稿，无需调用旧版 `image.detach`。
+- 新增两项集成回归：两张图片的路径、MIME 和目标会话随 prompt 提交；新版暂存图片后的部分上传失败保留草稿且不发送 prompt。旧版附件测试继续验证不附加新版参数及失败时 detach。
+- `./script/test.sh`：151 项，150 通过、1 项 opt-in live test 跳过、0 失败。日志 `/tmp/hermes-image-full.log`。初次针对性测试暴露测试自身的模拟请求序号计算错误，修正后完整套件通过。
+- `./script/build_and_run.sh --verify`：Debug 签名构建、开发版启动与进程检查通过。`git diff --check` 通过。日志 `/tmp/hermes-image-build.log`、`/tmp/hermes-mac-build.log`。
+- 本次未向真实模型发送测试图片；真实模型视觉回复仍待用户在 Hermes Dev 重新粘贴并发送验收。未修改或重启后端。

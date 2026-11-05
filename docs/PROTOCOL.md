@@ -136,8 +136,8 @@
 
 附件字节在粘贴时复制到内存，按 `(service, profile, storedID?)` 隔离，切换会话可以取回，创建会话或选择模型创建会话时一同迁移。未发送附件不跨应用重启保存。发送前先创建/恢复会话，再逐项调用：
 
-- 图片：`image.attach_bytes {profile, session_id: runtimeID, filename, content_base64}`。要求响应 `attached=true` 和 `path`；服务端将图片加入下一轮多模态输入。支持 PNG/JPEG/GIF/WebP/BMP；其他格式的文件走普通文件附件。
+- 图片：`image.attach_bytes {profile, session_id: runtimeID, filename, content_base64}`。要求响应 `attached=true` 和 `path`。旧版 TUI 服务将图片加入下一轮多模态输入；新版 Gateway 响应另带 `mime`，只暂存字节，客户端必须在随后的 `prompt.submit` 中携带 `attachments: [{path, mime}]` 才会提交图片。仅使用服务返回的路径与 MIME，不将本机路径写入消息充当图片。旧版支持 PNG/JPEG/GIF/WebP/BMP，新版 Gateway 支持 PNG/JPEG/GIF/WebP；其他格式的文件走普通文件附件。
 - 文件（含 PDF）：`file.attach {profile, session_id: runtimeID, name, data_url}`。要求响应 `attached=true` 和 `ref_text`；把服务返回的 `@file:` 引用追加到消息正文，不把本机路径当作远程路径。
 - 全部附件确认后调用普通 `prompt.submit`。带附件时等待当前回复结束后才允许发送，避免与 `session.steer` 的文字补充混用。上传部分失败时保留文字与附件，已确认暂存的图片通过 `image.detach {profile, session_id, path}` 清理；上传/清理结果不确定时标记会话状态待确认，不自动重发。
 
-方法契约对照官方 [methods_prompt.py](https://github.com/NousResearch/hermes-agent/blob/c57331677d7fc46298a7159cf3a650853f0966c5/tui_gateway/methods_prompt.py) 的 `image.attach_bytes`、`file.attach`、`image.detach`。服务不支持附件方法时显示错误并保留草稿，不回退为发送本机路径。模拟服务验证不等于真实服务的文件处理或模型视觉能力验收。
+方法契约对照官方 [methods_prompt.py](https://github.com/NousResearch/hermes-agent/blob/c57331677d7fc46298a7159cf3a650853f0966c5/tui_gateway/methods_prompt.py) 的 `image.attach_bytes`、`file.attach`、`image.detach`；新版另对照部署 revision `b200f5bc60e31588ba2cb60e288029c4a54ba5fa` 的 `gateway/session_images.py`、`gateway/session_ingress_media.py` 与 `gateway/session_controls.py`。新版暂存图片未绑定会话，无需在提交前失败时调用旧版 `image.detach`。服务不支持附件方法时显示错误并保留草稿，不回退为发送本机路径。模拟服务验证不等于真实服务的文件处理或模型视觉能力验收。

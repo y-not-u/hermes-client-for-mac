@@ -636,6 +636,7 @@ import AppKit
         let attachments = draftAttachments
         var attachmentContext = sourceContext
         var attachedImagePaths: [String] = []
+        var imageInputs: [HermesRPCRequest.ImageInput] = []
         var attachmentConversation: Conversation?
         var submitted = false
         if !attachments.isEmpty { uploadingAttachments.insert(sourceContext) }
@@ -695,13 +696,23 @@ import AppKit
                     }
                     throw error
                 }
-                if attachment.isImage, !response["path"].string.isEmpty { attachedImagePaths.append(response["path"].string) }
+                // Legacy uploads mutate the session; Gateway uploads with a MIME only stage bytes.
+                if attachment.isImage, response["mime"].string.isEmpty, !response["path"].string.isEmpty {
+                    attachedImagePaths.append(response["path"].string)
+                }
                 guard epoch == generation else { throw CancellationError() }
                 guard response["attached"].bool else { throw ClientError(message: "服务未确认附件上传：\(attachment.name)") }
                 if attachment.isImage {
                     guard !response["path"].string.isEmpty else {
                         c.uncertain = true
                         throw ClientError(message: "服务未返回图片附件路径，请重新查询会话状态")
+                    }
+                    let mime = response["mime"].string
+                    if !mime.isEmpty {
+                        guard ["image/png", "image/jpeg", "image/gif", "image/webp"].contains(mime) else {
+                            throw ClientError(message: "服务返回不支持的图片类型：\(mime)")
+                        }
+                        imageInputs.append(.init(path: response["path"].string, mimeType: mime))
                     }
                     promptParts.append("[User attached image: \(attachment.name)]")
                 } else {
@@ -730,7 +741,7 @@ import AppKit
             if navigation == originNavigation && selectedProfile == profile && selectedSession == c.key.storedID {
                 if draft == text { draft = "" } else { persistDraft() }
             }
-            do { _ = try await client.execute(.submitPrompt(profile: profile, runtimeID: runtime, text: prompt)) }
+            do { _ = try await client.execute(.submitPrompt(profile: profile, runtimeID: runtime, text: prompt, images: imageInputs)) }
             catch { guard epoch == generation else { return }; c.uncertain = true; c.error = "发送结果未知：\(error.localizedDescription)。请重新查询状态，不会自动重发。" }
         } catch {
             // Roll back staged images if no prompt was attempted. Files are inert until referenced.

@@ -3,6 +3,11 @@ import Foundation
 /// Typed inputs for the chat/model RPC contract. Dynamic responses remain open JSON
 /// so additive server fields and snapshot receive ordinals survive transport decoding.
 enum HermesRPCRequest {
+    struct ImageInput {
+        let path: String
+        let mimeType: String
+    }
+
     enum FollowUpMethod: String {
         case redirect = "session.redirect"
         case steer = "session.steer"
@@ -13,7 +18,7 @@ enum HermesRPCRequest {
     case resumeSession(profile: String, sessionID: String)
     case modelOptions(profile: String, runtimeID: String?, refresh: Bool)
     case setModel(profile: String, runtimeID: String, choice: ModelChoice, confirmed: Bool)
-    case submitPrompt(profile: String, runtimeID: String, text: String, queued: Bool = false)
+    case submitPrompt(profile: String, runtimeID: String, text: String, queued: Bool = false, images: [ImageInput] = [])
     case followUp(FollowUpMethod, profile: String, runtimeID: String, text: String)
     case attach(profile: String, runtimeID: String, attachment: ComposerAttachment)
     case detachImage(profile: String, runtimeID: String, path: String)
@@ -54,10 +59,13 @@ enum HermesRPCRequest {
             params["key"] = .string("model"); params["value"] = .string(choice.switchValue)
             if confirmed { params["confirm_expensive_model"] = .bool(true) }
             return params
-        case .submitPrompt(let profile, let runtimeID, let text, let queued):
+        case .submitPrompt(let profile, let runtimeID, let text, let queued, let images):
             var params = Self.sessionParams(profile: profile, runtimeID: runtimeID)
             params["text"] = .string(text)
             if queued { params["queued"] = .bool(true) }
+            if !images.isEmpty {
+                params["attachments"] = .array(images.map { .object(["path": .string($0.path), "mime": .string($0.mimeType)]) })
+            }
             return params
         case .followUp(_, let profile, let runtimeID, let text):
             var params = Self.sessionParams(profile: profile, runtimeID: runtimeID)

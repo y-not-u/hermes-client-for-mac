@@ -114,9 +114,51 @@ import AppKit
         XCTAssertEqual(requests[0]["params"]["content_base64"].string, img.data.base64EncodedString())
         XCTAssertEqual(requests[1]["params"]["data_url"].string, "data:text/plain;base64," + file.data.base64EncodedString())
         XCTAssertTrue(requests[2]["params"]["text"].string.contains("@file:\"uploads/report.txt\""))
+        XCTAssertEqual(requests[2]["params"]["attachments"], .null, "Legacy servers consume session-staged images")
         XCTAssertTrue(store.draftAttachments.isEmpty)
         store.addAttachments([img])
         XCTAssertFalse(store.canSend, "Attachments must wait for the active turn to complete")
+    }
+
+    func testGatewayStagedImagesAreIncludedInPromptSubmission() async throws {
+        let (store, client, defaults, name, address) = try await connectedStore()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        _ = try await fixture(["action": .string("configure"), "staged_images": .bool(true)], address: address)
+        store.draft = "比较这两张图"
+        store.addAttachments([try image(), try image()])
+        await store.send()
+        let report = try await fixture(["action": .string("inspect")], address: address)
+        let uploads = report["requests"].array.enumerated().filter { $0.element["method"].string == "image.attach_bytes" }
+        let prompt = try XCTUnwrap(report["requests"].array.first { $0["method"].string == "prompt.submit" })
+        let images = prompt["params"]["attachments"].array
+        XCTAssertEqual(images.count, 2)
+        XCTAssertEqual(uploads.count, 2)
+        for (index, upload) in uploads.enumerated() {
+            let ordinal = upload.offset + 1
+            XCTAssertEqual(images[index]["path"].string, "/workspace/upload-\(ordinal)")
+            XCTAssertEqual(images[index]["mime"].string, "image/png")
+            XCTAssertEqual(upload.element["params"]["session_id"], prompt["params"]["session_id"])
+        }
+        XCTAssertTrue(prompt["params"]["text"].string.contains("比较这两张图"))
+        XCTAssertTrue(store.draftAttachments.isEmpty)
+        XCTAssertNil(store.error)
+    }
+
+    func testGatewayStagedImagesNeedNoLegacyDetachOnUploadFailure() async throws {
+        let (store, client, defaults, name, address) = try await connectedStore()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        _ = try await fixture(["action": .string("configure"), "staged_images": .bool(true),
+                               "attachment_error": .string("file.attach")], address: address)
+        store.draft = "保留草稿"
+        store.addAttachments([try image(), try ComposerAttachment(name: "a.txt", data: Data([1]), mimeType: "text/plain")])
+        await store.send()
+        let report = try await fixture(["action": .string("inspect")], address: address)
+        let methods = report["requests"].array.map { $0["method"].string }
+        XCTAssertFalse(methods.contains("prompt.submit"))
+        XCTAssertFalse(methods.contains("image.detach"))
+        XCTAssertEqual(store.draft, "保留草稿")
+        XCTAssertEqual(store.draftAttachments.count, 2)
+        XCTAssertFalse(store.current?.uncertain ?? true)
     }
 
     func testPartialUploadFailureRetainsDraftAndDetachesStagedImage() async throws {

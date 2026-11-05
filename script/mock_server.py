@@ -29,6 +29,7 @@ class Fixture:
         self.create_delay = 0
         self.attachment_error = None
         self.attachment_delay = 0
+        self.staged_images = False
         self.submit_delay = 0
         self.refreshes = 0
         self.tickets = 0
@@ -63,6 +64,7 @@ class Fixture:
             self.submit_delay = body.get('submit_delay', self.submit_delay)
             self.attachment_error = body.get('attachment_error', self.attachment_error)
             self.attachment_delay = body.get('attachment_delay', self.attachment_delay)
+            self.staged_images = body.get('staged_images', self.staged_images)
             self.complete_on_resume = body.get('complete_on_resume', self.complete_on_resume)
             self.resume_delay = body.get('resume_delay', self.resume_delay)
             self.session_rows = body.get('session_rows', self.session_rows)
@@ -331,6 +333,8 @@ class Fixture:
             else:
                 result = {'attached': True, 'path': '/workspace/upload-' + str(len(self.requests)),
                           'ref_text': '@file:"uploads/' + params.get('name', 'image.png') + '"'}
+                if method == 'image.attach_bytes' and self.staged_images:
+                    result['mime'] = 'image/png'
         elif method == 'prompt.submit':
             await asyncio.sleep(self.submit_delay)
             session = next(s for s in self.sessions.values() if s['session_id'] == params['session_id'])
