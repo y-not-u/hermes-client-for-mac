@@ -72,6 +72,7 @@ import AppKit
     private var flushTask: Task<Void, Never>?
     private var reconnectTask: Task<Void, Never>?
     private var searchTask: Task<Void, Never>?
+    private var titleRefreshTasks: [ConversationKey: Task<Void, Never>] = [:]
     private var listRevision: [String: UUID] = [:]
     private var sendingSessions: Set<ConversationKey> = []
     // A draft has no stored ID until creation returns. Navigation identifies each
@@ -942,6 +943,8 @@ import AppKit
         guard expectedService == nil || expectedService == service else { return }
         guard let client, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let profile = owner ?? selectedProfile; let epoch = generation
+        let key = ConversationKey(service: service, profile: profile, storedID: row.id)
+        titleRefreshTasks.removeValue(forKey: key)?.cancel()
         do {
             try await client.mutateSession(row.id, profile: profile, changes: ["title": .string(title)])
             guard epoch == generation else { return }
@@ -1040,8 +1043,40 @@ import AppKit
         let wasGenerating = conversation.generating
         let active = isAppActive()
         conversation.apply(type: type, payload: payload, visible: active && currentKey == conversation.key)
+        if type == "message.complete", wasGenerating, conversation.error == nil {
+            refreshSessionTitle(for: conversation.key)
+        }
         guard type == "message.complete", wasGenerating, conversation.error == nil, !active else { return }
         let profile = profiles.first { $0.name == conversation.key.profile }?.displayName ?? conversation.key.profile
         onReplyCompleted(conversation.key, profile, payload["text"].string)
+    }
+
+    private func refreshSessionTitle(for key: ConversationKey) {
+        titleRefreshTasks[key]?.cancel()
+        let epoch = generation
+        titleRefreshTasks[key] = Task { [weak self] in
+            // The service may generate the title asynchronously after the reply.
+            for delay in [1, 4, 10] {
+                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                guard let self, self.generation == epoch, self.connected, let client = self.client else { return }
+                guard let result = try? await client.rest("/api/sessions", query: [
+                    URLQueryItem(name: "profile", value: key.profile),
+                    URLQueryItem(name: "limit", value: "40"),
+                    URLQueryItem(name: "offset", value: "0"),
+                    URLQueryItem(name: "order", value: "recent"),
+                    URLQueryItem(name: "exclude_sources", value: "cron")
+                ]), !Task.isCancelled, self.generation == epoch,
+                      let row = result["sessions"].array.first(where: { $0["id"].string == key.storedID && !$0["archived"].bool }),
+                      !row["title"].string.isEmpty else { continue }
+                let title = row["title"].string
+                if let index = self.sessions[key.profile]?.firstIndex(where: { $0.id == key.storedID }) {
+                    self.sessions[key.profile]?[index].title = title
+                }
+                if let index = self.local.state(self.service).pinnedSessions?[key.profile]?.firstIndex(where: { $0.id == key.storedID }) {
+                    self.local.update(self.service) { $0.pinnedSessions?[key.profile]?[index].title = title }
+                }
+            }
+            self?.titleRefreshTasks[key] = nil
+        }
     }
 }

@@ -58,6 +58,18 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         ])])
     }
 
+    func testCompletedReplyRefreshesSessionTitle() async throws {
+        let (store, client, defaults, name) = try await prepare()
+        defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
+        store.draft = "temporary title"; await store.send()
+        let conversation = try XCTUnwrap(store.current)
+        let id = conversation.key.storedID
+        XCTAssertEqual(store.sessions[conversation.key.profile]?.first(where: { $0.id == id })?.title, "temporary title")
+        try await emit(id, type: "message.complete", text: "done")
+        // The fixture returns the session ID as the server title.
+        try await eventually { store.sessions[conversation.key.profile]?.first(where: { $0.id == id })?.title == id }
+    }
+
     func testConnectedClientAndStoreReleaseWithoutExplicitDisconnect() async throws {
         guard !address.isEmpty else { throw XCTSkip("Run script/test.sh") }
         _ = try await fixture(["action": .string("reset")])
