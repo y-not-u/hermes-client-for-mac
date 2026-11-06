@@ -60,7 +60,7 @@ struct ChatView: View {
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.top, 14)
+            .padding(.top, 4)
             .padding(.bottom, 10)
 
             Rectangle()

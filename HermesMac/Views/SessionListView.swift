@@ -82,7 +82,7 @@ struct SessionListView: View {
                 .help("刷新会话")
             }
             .padding(.horizontal, 12)
-            .padding(.top, 14)
+            .padding(.top, 4)
             .padding(.bottom, 8)
 
             // Sessions List in Clean ScrollView
