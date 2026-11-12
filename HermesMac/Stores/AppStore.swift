@@ -450,6 +450,23 @@ import AppKit
         guard let i = profiles.firstIndex(where: { $0.name == name }), profiles.indices.contains(i + delta) else { return }
         profiles.swapAt(i, i + delta); local.update(service) { $0.profileOrder = profiles.map(\.name) }
     }
+    /// Emoji icons are a client-side preference: the service has no icon field,
+    /// so they live in local metadata keyed by profile name.
+    func profileIcon(_ name: String) -> String? {
+        guard !name.isEmpty, let icon = local.state(service).profileIcons?[name] else { return nil }
+        let trimmed = icon.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+    var selectedProfileIcon: String? { profileIcon(selectedProfile) }
+    func setProfileIcon(_ icon: String?, for name: String) {
+        guard !name.isEmpty else { return }
+        let trimmed = icon?.first(where: { !$0.isWhitespace }).map(String.init) ?? ""
+        local.update(service) { state in
+            var icons = state.profileIcons ?? [:]
+            if trimmed.isEmpty { icons.removeValue(forKey: name) } else { icons[name] = trimmed }
+            state.profileIcons = icons
+        }
+    }
     private func restoreDraft() { draft = local.state(service).drafts[LocalState.draftKey(profile: selectedProfile, session: selectedSession)] ?? "" }
     func newSession() { current?.commitPendingStream(); defer { pruneConversationCache() }; modelConfirmation = nil; navigation = UUID(); selectedSession = nil; local.update(service) { $0.lastSession.removeValue(forKey: selectedProfile) }; restoreDraft() }
     func searchChanged() {

@@ -385,6 +385,25 @@ import AppKit
         XCTAssertNotEqual(key, LocalState.draftKey(profile: "b", session: "session"))
     }
 
+    func testProfileIconPersistsLocallyAndFallsBackToInitial() throws {
+        let name = "HermesMacTests-Icon-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let store = AppStore(local: LocalState(defaults: defaults))
+        XCTAssertNil(store.profileIcon("a"))
+        store.setProfileIcon("  🦊 ", for: "a")
+        XCTAssertEqual(store.profileIcon("a"), "🦊")
+        // One grapheme only, so a pasted sequence cannot overflow the badge.
+        store.setProfileIcon("🤖🧪", for: "b")
+        XCTAssertEqual(store.profileIcon("b"), "🤖")
+        let restored = AppStore(local: LocalState(defaults: defaults))
+        XCTAssertEqual(restored.profileIcon("a"), "🦊")
+        XCTAssertEqual(restored.profileIcon("b"), "🤖")
+        restored.setProfileIcon(nil, for: "a")
+        XCTAssertNil(restored.profileIcon("a"))
+        XCTAssertNil(AppStore(local: LocalState(defaults: defaults)).profileIcon("a"))
+    }
+
     func testSnapshotRestoresInflightAndApproval() {
         let c = Conversation(key: ConversationKey(service: "local", profile: "a", storedID: "stored"))
         c.snapshot(.object([

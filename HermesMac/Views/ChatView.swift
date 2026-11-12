@@ -8,6 +8,7 @@ struct ChatView: View {
     @State private var pendingInitialScroll: ConversationKey?
     @State private var isAtBottom = true
     @State private var isBottomButtonHovered = false
+    @State private var showingIconPicker = false
 
     private var currentSessionTitle: String {
         if let selected = store.selectedSession,
@@ -24,9 +25,20 @@ struct ChatView: View {
                 ProfileAvatar(
                     name: store.selectedProfile,
                     displayName: store.profileTitle,
+                    emoji: store.selectedProfileIcon,
                     size: 26,
                     cornerRadius: 8
                 )
+                .animation(.spring(response: 0.25, dampingFraction: 0.7), value: store.selectedProfileIcon)
+                .popover(isPresented: $showingIconPicker, arrowEdge: .bottom) {
+                    ProfileIconPicker(title: store.profileTitle, current: store.selectedProfileIcon) { emoji in
+                        store.setProfileIcon(emoji, for: store.selectedProfile)
+                    }
+                }
+                .contextMenu {
+                    Button("设置图标…") { openIconPicker() }
+                        .disabled(store.selectedProfile.isEmpty)
+                }
 
                 Text(currentSessionTitle)
                     .font(.system(size: 14, weight: .semibold))
@@ -111,6 +123,15 @@ struct ChatView: View {
     }
 
     // MARK: - Empty State / Hero Welcome
+    /// A popover cannot open in the same runloop pass that dismisses the menu.
+    private func openIconPicker() {
+        showingIconPicker = false
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(60))
+            showingIconPicker = true
+        }
+    }
+
     private var emptyStateView: some View {
         VStack(spacing: 20) {
             Spacer()
@@ -119,6 +140,7 @@ struct ChatView: View {
                 ProfileAvatar(
                     name: store.selectedProfile,
                     displayName: store.profileTitle,
+                    emoji: store.selectedProfileIcon,
                     size: 54,
                     cornerRadius: 15
                 )
@@ -303,6 +325,7 @@ struct ChatView: View {
                                 message: row.message,
                                 profileName: store.selectedProfile,
                                 profileTitle: store.profileTitle,
+                                profileEmoji: store.selectedProfileIcon,
                                 tools: row.tools,
                                 isRunning: c.generating && row.id == rows.last?.id,
                                 conversation: c.key,
@@ -338,6 +361,7 @@ struct ChatView: View {
                                 ProfileAvatar(
                                     name: store.selectedProfile,
                                     displayName: store.profileTitle,
+                                    emoji: store.selectedProfileIcon,
                                     size: 28,
                                     cornerRadius: 8
                                 )
@@ -533,6 +557,7 @@ private struct MessageRowView: View, Equatable {
     let message: Message
     let profileName: String
     let profileTitle: String
+    var profileEmoji: String? = nil
     var tools: [ToolCall] = []
     var isRunning = false
     let conversation: ConversationKey
@@ -548,6 +573,7 @@ private struct MessageRowView: View, Equatable {
         lhs.message == rhs.message
             && lhs.profileName == rhs.profileName
             && lhs.profileTitle == rhs.profileTitle
+            && lhs.profileEmoji == rhs.profileEmoji
             && lhs.isRunning == rhs.isRunning
             && lhs.conversation == rhs.conversation
             && lhs.tools.count == rhs.tools.count
@@ -601,6 +627,7 @@ private struct MessageRowView: View, Equatable {
                 ProfileAvatar(
                     name: profileName,
                     displayName: profileTitle,
+                    emoji: profileEmoji,
                     size: 28,
                     cornerRadius: 8
                 )

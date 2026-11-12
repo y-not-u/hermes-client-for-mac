@@ -7,6 +7,8 @@ struct ServiceState: Codable, Equatable {
     var drafts: [String: String] = [:]
     // Optional so metadata written before pinning was introduced still decodes.
     var pinnedSessions: [String: [SessionSummary]]?
+    // Optional so metadata written before custom icons was introduced still decodes.
+    var profileIcons: [String: String]?
 }
 @MainActor @Observable final class LocalState {
     private let defaults: UserDefaults

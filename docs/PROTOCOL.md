@@ -15,7 +15,7 @@
 | 接口 | 用途与归属 |
 | --- | --- |
 | GET `/api/status` | REST 连通性、`auth_required` 与 `auth_flows` 能力 |
-| GET `/api/profiles` | `profiles` 列表，按服务保存显示顺序 |
+| GET `/api/profiles` | `profiles` 列表，按服务保存显示顺序；服务端没有图标字段，emoji 图标仅保存在本机 UserDefaults |
 | GET `/api/sessions?profile=…&exclude_sources=cron` | 当前 profile 的历史，排除定时任务运行会话，40 条分页 |
 | GET `/api/sessions/search?profile=…&q=…&exclude_sources=cron` | 搜索当前 profile 历史，排除定时任务运行会话 |
 | GET `/api/sessions/{storedID}/messages?profile=…` | 首屏读取最新历史、按需读取更早记录，每页 20 条，`inline_images=false` |

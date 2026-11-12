@@ -6,13 +6,16 @@ import AppKit
 public struct ProfileAvatar: View {
     public let name: String
     public let displayName: String
+    /// Optional emoji chosen locally; it replaces the initial when present.
+    public var emoji: String? = nil
     public var size: CGFloat = 40
     public var cornerRadius: CGFloat = 11
     public var isSelected: Bool = false
 
-    public init(name: String, displayName: String? = nil, size: CGFloat = 40, cornerRadius: CGFloat = 11, isSelected: Bool = false) {
+    public init(name: String, displayName: String? = nil, emoji: String? = nil, size: CGFloat = 40, cornerRadius: CGFloat = 11, isSelected: Bool = false) {
         self.name = name
         self.displayName = displayName ?? name
+        self.emoji = emoji
         self.size = size
         self.cornerRadius = cornerRadius
         self.isSelected = isSelected
@@ -40,22 +43,45 @@ public struct ProfileAvatar: View {
         return String(first).uppercased()
     }
 
+    /// One grapheme only: a pasted sequence or ZWJ family must not overflow the badge.
+    private var glyph: String? {
+        guard let emoji, let first = emoji.first(where: { !$0.isWhitespace }) else { return nil }
+        return String(first)
+    }
+
     public var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(LinearGradient(colors: palette.gradient, startPoint: .topLeading, endPoint: .bottomTrailing))
+                .fill(background)
                 .shadow(color: isSelected ? palette.shadow.opacity(0.35) : Color.black.opacity(0.08), radius: isSelected ? 5 : 2, y: isSelected ? 2 : 1)
 
-            Text(initial)
-                .font(.system(size: size * 0.46, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.2), radius: 1, y: 1)
+            if let glyph {
+                Text(glyph)
+                    .font(.system(size: size * 0.56))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                    .padding(.horizontal, 2)
+            } else {
+                Text(initial)
+                    .font(.system(size: size * 0.46, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.2), radius: 1, y: 1)
+            }
         }
         .frame(width: size, height: size)
         .overlay {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .strokeBorder(isSelected ? Color.white.opacity(0.85) : Color.white.opacity(0.2), lineWidth: isSelected ? 2 : 0.8)
         }
+    }
+
+    /// Emoji art is already colorful, so it sits on a soft tint of the palette
+    /// instead of competing with the saturated gradient.
+    private var background: AnyShapeStyle {
+        if glyph != nil {
+            return AnyShapeStyle(palette.gradient[0].opacity(0.16))
+        }
+        return AnyShapeStyle(LinearGradient(colors: palette.gradient, startPoint: .topLeading, endPoint: .bottomTrailing))
     }
 }
 

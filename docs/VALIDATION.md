@@ -1,5 +1,14 @@
 # 验证与人工验收
 
+### 2026-11-12 profile 自定义 emoji 图标
+
+侧边栏 avatar 与聊天顶部 avatar 支持本机 emoji 图标：右键「设置图标…」打开选择器，可从 48 个常用 emoji 中点选，也可直接输入或粘贴任意 emoji（只取第一个字形），另有「使用默认」／右键「恢复默认图标」回到首字母渐变图标。`/api/profiles` 没有图标字段，图标按 `(服务, profile 名)` 存在 `LocalState` 的 `ServiceState.profileIcons`（UserDefaults），不写回服务端；服务地址变化或换服务时互不影响。设置 emoji 后 avatar 背景改为该 profile 调色板的淡色底，避免彩色 emoji 与饱和渐变冲突。
+
+- 消息行 `MessageRowView` 新增 `profileEmoji` 参与 `Equatable` 比较，否则改图标后已渲染的历史消息头像不会刷新（第 24 条性能改动后行会被跳过重算）。
+- 菜单项到 popover 之间延迟 60ms 再呈现，避免菜单关闭与 popover 同一次 runloop 冲突。
+- 新增 `Tests/HermesMacTests/StateTests.swift` 中的 `testProfileIconPersistsLocallyAndFallsBackToInitial`（重载后仍保留、多字形输入只留一个、清除后回到默认）。**该测试尚未执行**：本机只有 Command Line Tools，没有 Xcode，`swift test` 因 `no such module 'XCTest'` 失败，`./script/build_and_run.sh --build` 也因缺少本地签名证书无法运行。提交前必须在装有 Xcode 的环境跑 `./script/test.sh`。
+- 目前只做了 `swiftc -typecheck`（应用目标全部源码，macOS 14 目标）编译验证；界面（右键菜单、popover 定位、emoji 缩放）未做人工验收。
+
 ### 2026-11-12 流式回复期间的 CPU 占用
 
 用户反馈回复流式输出时 CPU 占用升到约 30%。定位方式：临时在 Debug 构建里加了一个隐藏的探针入口（`HermesMac --stream-probe`，在 NSWindow 中托管真实 `ChatView`，按固定节奏注入合成 delta，用 `getrusage` 统计进程 CPU），测量后已全部删除，不留探针代码。

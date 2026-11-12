@@ -148,6 +148,7 @@ struct ProfileRail: View {
                     ForEach(store.profiles) { profile in
                         ProfileRailItem(
                             profile: profile,
+                            icon: store.profileIcon(profile.name),
                             isSelected: store.selectedProfile == profile.name,
                             hasApproval: store.profileApproval(profile.name),
                             isBusy: store.profileBusy(profile.name),
@@ -157,6 +158,9 @@ struct ProfileRail: View {
                             },
                             onMove: { delta in
                                 store.moveProfile(profile.name, by: delta)
+                            },
+                            onSetIcon: { emoji in
+                                store.setProfileIcon(emoji, for: profile.name)
                             }
                         )
                     }
@@ -176,14 +180,17 @@ struct ProfileRail: View {
 
 private struct ProfileRailItem: View {
     let profile: Profile
+    let icon: String?
     let isSelected: Bool
     let hasApproval: Bool
     let isBusy: Bool
     let hasUnread: Bool
     let onSelect: () -> Void
     let onMove: (Int) -> Void
+    let onSetIcon: (String?) -> Void
 
     @State private var isHovered = false
+    @State private var showingIconPicker = false
 
     var body: some View {
         Button(action: onSelect) {
@@ -209,6 +216,7 @@ private struct ProfileRailItem: View {
                         ProfileAvatar(
                             name: profile.name,
                             displayName: profile.displayName,
+                            emoji: icon,
                             size: 40,
                             cornerRadius: isSelected ? 12 : (isHovered ? 13 : 14),
                             isSelected: isSelected
@@ -216,6 +224,10 @@ private struct ProfileRailItem: View {
                         .scaleEffect(isHovered && !isSelected ? 1.05 : 1.0)
                         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isHovered)
                         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isSelected)
+                        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: icon)
+                        .popover(isPresented: $showingIconPicker, arrowEdge: .trailing) {
+                            ProfileIconPicker(title: profile.displayName, current: icon, onApply: onSetIcon)
+                        }
 
                         // Status badges
                         if hasApproval {
@@ -258,8 +270,22 @@ private struct ProfileRailItem: View {
         .accessibilityLabel(profile.displayName)
         .accessibilityValue(hasApproval ? "待审批" : isBusy ? "生成中" : hasUnread ? "未读完成" : "")
         .contextMenu {
+            Button("设置图标…") { openIconPicker() }
+            if icon != nil {
+                Button("恢复默认图标") { onSetIcon(nil) }
+            }
+            Divider()
             Button("向上移动") { onMove(-1) }
             Button("向下移动") { onMove(1) }
+        }
+    }
+
+    /// A popover cannot open in the same runloop pass that dismisses the menu.
+    private func openIconPicker() {
+        showingIconPicker = false
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(60))
+            showingIconPicker = true
         }
     }
 }
