@@ -48,9 +48,17 @@ import Observation
     var hasOlder = false
     private var streamID: String?
     private var activityID: String?
+    /// Streaming deltas are merged before they touch `messages`: a WebSocket burst
+    /// arrives far faster than the transcript can redraw, and each committed delta
+    /// re-renders the rows that follow it.
+    private var pendingStream = ""
+    private var pendingStreamFlush: Task<Void, Never>?
+    private var lastStreamCommit = Date.distantPast
+    private static let streamCommitInterval: TimeInterval = 0.1
     private var followUpStreams: [String: (stream: String?, activity: String?)] = [:]
     init(key: ConversationKey) { self.key = key }
     func snapshot(_ json: JSON, history: [Message]? = nil) {
+        commitPendingStream()
         let previousMessages = messages
         let wasUncertain = uncertain
         runtimeID = json["session_id"].string
@@ -133,6 +141,7 @@ import Observation
         if !generating { activityID = nil }
     }
     func recoverUnconfirmedMessage() -> String? {
+        commitPendingStream()
         guard uncertain, !generating, !loading, !queryingStatus,
               let id = recoverableMessageID,
               let index = messages.firstIndex(where: { $0.id == id }) else { return nil }
@@ -145,13 +154,44 @@ import Observation
         if let streamID, let i = messages.firstIndex(where: { $0.id == streamID }) { messages[i].text += text }
         else { let message = Message(role: "assistant", text: text); streamID = message.id; messages.append(message) }
     }
+    /// Receives one `message.delta`. The first delta of a burst is committed at once
+    /// so a slow reply still paints immediately; deltas that follow within
+    /// `streamCommitInterval` are buffered and committed together.
+    private func receiveDelta(_ text: String) {
+        guard !text.isEmpty else { return }
+        pendingStream += text
+        guard pendingStreamFlush == nil else { return }
+        let remaining = Self.streamCommitInterval - Date().timeIntervalSince(lastStreamCommit)
+        if remaining <= 0 {
+            commitPendingStream()
+        } else {
+            pendingStreamFlush = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                self?.commitPendingStream()
+            }
+        }
+    }
+    /// Commits buffered deltas before handled event boundaries so text keeps its
+    /// order and the tail of a reply is not dropped.
+    func commitPendingStream() {
+        pendingStreamFlush?.cancel()
+        pendingStreamFlush = nil
+        guard !pendingStream.isEmpty else { return }
+        let text = pendingStream
+        pendingStream = ""
+        lastStreamCommit = Date()
+        appendStream(text)
+    }
     func begin(_ text: String) {
+        commitPendingStream()
         streamID = nil; activityID = nil; error = nil; generating = true; unread = false
         let message = Message(role: "user", text: text)
         messages.append(message)
         lastSubmittedMessageID = message.id
     }
     func appendFollowUp(_ text: String, splitReply: Bool) -> String {
+        commitPendingStream()
         let previous = (stream: streamID, activity: activityID)
         if splitReply { streamID = nil; activityID = nil }
         error = nil
@@ -163,19 +203,29 @@ import Observation
         return message.id
     }
     func setDelivery(_ id: String, _ status: String, preserveReply: Bool = false) {
+        commitPendingStream()
         if let previous = followUpStreams.removeValue(forKey: id), preserveReply, generating, streamID == nil {
             streamID = previous.stream; activityID = previous.activity
         }
         if let index = messages.firstIndex(where: { $0.id == id }) { messages[index].deliveryStatus = status }
     }
     func moveFollowUpToEnd(_ id: String) {
+        commitPendingStream()
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
         let message = messages.remove(at: index); messages.append(message)
     }
     func apply(type: String, payload: JSON, visible: Bool) {
+        // Flush at handled event boundaries so buffered text keeps its order.
+        // Unknown events have no effect and must not defeat coalescing.
+        switch type {
+        case "message.start", "message.interim", "message.complete", "error", "tool.start", "tool.complete", "request.cancel":
+            commitPendingStream()
+        default:
+            break
+        }
         switch type {
         case "message.start": generating = true
-        case "message.delta": appendStream(payload["text"].string)
+        case "message.delta": receiveDelta(payload["text"].string)
         case "message.interim":
             if !payload["already_streamed"].bool { appendStream(payload["text"].string) }; streamID = nil
         case "message.complete":

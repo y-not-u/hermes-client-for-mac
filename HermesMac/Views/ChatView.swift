@@ -309,6 +309,7 @@ struct ChatView: View {
                                 store: store,
                                 previewImage: { file, filename in imagePreview = ImagePreview(file: file, filename: filename) }
                             )
+                            .equatable()
                         }
 
                         ForEach(c.approvals) { approval in
@@ -528,7 +529,7 @@ private struct TranscriptRow: Identifiable {
     let tools: [ToolCall]
 }
 
-private struct MessageRowView: View {
+private struct MessageRowView: View, Equatable {
     let message: Message
     let profileName: String
     let profileTitle: String
@@ -539,6 +540,22 @@ private struct MessageRowView: View {
     let previewImage: (RemoteImageFile, String) -> Void
 
     @State private var isHovered = false
+
+    /// Every delta rebuilds the transcript. Comparing the row's own data lets
+    /// SwiftUI skip the rows that did not change; `store` and `previewImage` are
+    /// stable references and are deliberately excluded from the comparison.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.message == rhs.message
+            && lhs.profileName == rhs.profileName
+            && lhs.profileTitle == rhs.profileTitle
+            && lhs.isRunning == rhs.isRunning
+            && lhs.conversation == rhs.conversation
+            && lhs.tools.count == rhs.tools.count
+            && zip(lhs.tools, rhs.tools).allSatisfy {
+                $0.id == $1.id && $0.name == $1.name
+                    && $0.details == $1.details && $0.complete == $1.complete
+            }
+    }
 
     var body: some View {
         if message.role == "tool" {

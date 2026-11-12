@@ -103,6 +103,7 @@ import AppKit
                   !sendingSessions.contains(key), !modelSwitching.contains(key.profile),
                   !sessionMutations.contains(key), modelConfirmation?.key != key,
                   !modelLoading.contains(ModelPickerContext(service: key.service, profile: key.profile, sessionID: key.storedID)) else { continue }
+            c.commitPendingStream()
             conversations.removeValue(forKey: key)
             let runtimeIDs = routes.filter { $0.value == key }.map(\.key)
             for id in runtimeIDs { routes.removeValue(forKey: id); earlyFrames.removeValue(forKey: id) }
@@ -430,6 +431,7 @@ import AppKit
     func selectProfile(_ profile: String) async {
         guard profiles.contains(where: { $0.name == profile }) else { return }
         modelConfirmation = nil
+        current?.commitPendingStream()
         navigation = UUID(); selectedProfile = profile; selectedSession = local.state(service).lastSession[profile]; search = ""
         draft = local.state(service).drafts[LocalState.draftKey(profile: profile, session: selectedSession)] ?? ""
         local.update(service) { $0.selectedProfile = profile }
@@ -449,7 +451,7 @@ import AppKit
         profiles.swapAt(i, i + delta); local.update(service) { $0.profileOrder = profiles.map(\.name) }
     }
     private func restoreDraft() { draft = local.state(service).drafts[LocalState.draftKey(profile: selectedProfile, session: selectedSession)] ?? "" }
-    func newSession() { defer { pruneConversationCache() }; modelConfirmation = nil; navigation = UUID(); selectedSession = nil; local.update(service) { $0.lastSession.removeValue(forKey: selectedProfile) }; restoreDraft() }
+    func newSession() { current?.commitPendingStream(); defer { pruneConversationCache() }; modelConfirmation = nil; navigation = UUID(); selectedSession = nil; local.update(service) { $0.lastSession.removeValue(forKey: selectedProfile) }; restoreDraft() }
     func searchChanged() {
         searchTask?.cancel(); let profile = selectedProfile; let query = search
         searchTask = Task { [weak self] in
@@ -516,6 +518,8 @@ import AppKit
         let owner = profile ?? selectedProfile
         guard owner == selectedProfile, let client else { return }
         guard !sessionMutations.contains(ConversationKey(service: service, profile: owner, storedID: id)) else { return }
+        // Leaving a session commits any buffered delta so its tail survives the switch.
+        current?.commitPendingStream()
         navigation = UUID(); selectedSession = id; restoreDraft(); local.update(service) { $0.lastSession[owner] = id }
         let key = ConversationKey(service: service, profile: owner, storedID: id)
         touchConversation(key)

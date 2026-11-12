@@ -1,5 +1,17 @@
 # 验证与人工验收
 
+### 2026-11-12 流式回复期间的 CPU 占用
+
+用户反馈回复流式输出时 CPU 占用升到约 30%。定位方式：临时在 Debug 构建里加了一个隐藏的探针入口（`HermesMac --stream-probe`，在 NSWindow 中托管真实 `ChatView`，按固定节奏注入合成 delta，用 `getrusage` 统计进程 CPU），测量后已全部删除，不留探针代码。
+
+- 主要开销来自每收到一个 delta 就重绘整条转录：`MessageRowView` 原先没有 `Equatable`，没有闭包稳定的行也会重新求值；消息行里的 Markdown 分块（每行 `Text` + AttributedString + 悬停探针）随之全部重排。探针实测单次 delta 的 CPU 成本随转录长度增长：0 条历史约 17ms，8 条约 29ms，24 条约 75ms，60 条约 187ms。
+- 改动一：`MessageRowView` 改为 `Equatable`，手写比较消息、工具调用、profile 与运行状态，忽略 `store` 和 `previewImage` 闭包，调用处加 `.equatable()`。
+- 改动二：`Conversation` 将连续 delta 最多每 100ms 合并提交一次；首个片段立即提交，已处理的消息和状态事件及快照、切换会话等操作先提交缓冲文本，未知事件不触发提交。
+- 固定负载对比：临时 Debug 探针以相同的 24 条合成历史、50ms 间隔和 200 个 delta 驱动真实聊天视图。33.3ms 提交间隔耗 CPU 4.687 秒、平均 46.9%；100ms 间隔耗 CPU 2.568 秒、平均 25.6%。两次均生成 1890 字，耗时约 10 秒。这是单次合成窗口测量，并非真实服务或 HEAD 基线。探针代码已删除。
+- **未验证项**：没有取得 HEAD 的可比基线。用 `git worktree` 在独立目录构建 HEAD 对照版时冷编译超过 30 分钟被中止，因此上面只有同一份代码内部的对照数字，不能作为「相对修复前提升多少」的结论。
+- 新增 `Tests/HermesMacTests/StreamingCoalescingTests.swift`（涵盖突发合并、未知事件、定时冲刷、完成/错误/工具/快照边界、interim 顺序及离开会话冲刷）。**该测试尚未执行**：本机只有 Command Line Tools，没有 Xcode，`swift build --build-tests` 因 `no such module 'XCTest'` 失败。提交前必须在装有 Xcode 的环境跑 `./script/test.sh`。
+- 目前只做了 `swift build`（Debug，应用目标）编译验证，未做界面人工验收，也未在真实服务上观察流式占用的变化。
+
 ### 2026-11-06 审批请求系统通知
 
 新审批请求触发 macOS 通知，展示 profile 名称和审批说明（空说明使用打开应用处理审批的提示），前台也允许横幅和提示音。复用启动时的通知授权；回复完成通知仍只在后台触发。恢复会话快照中的待审批请求也接入通知，同一缓存会话内按请求 ID 去重，重复帧或断线恢复不会反复提醒。
