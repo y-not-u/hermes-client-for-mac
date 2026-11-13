@@ -2,7 +2,9 @@
 
 ### 2026-11-12 profile 自定义 emoji 图标
 
-侧边栏 avatar 与聊天顶部 avatar 支持本机 emoji 图标：右键「设置图标…」打开选择器，可从 48 个常用 emoji 中点选，也可直接输入或粘贴任意 emoji（只取第一个字形），另有「使用默认」／右键「恢复默认图标」回到首字母渐变图标。`/api/profiles` 没有图标字段，图标按 `(服务, profile 名)` 存在 `LocalState` 的 `ServiceState.profileIcons`（UserDefaults），不写回服务端；服务地址变化或换服务时互不影响。设置 emoji 后 avatar 背景改为该 profile 调色板的淡色底，避免彩色 emoji 与饱和渐变冲突。
+侧边栏 avatar 与聊天顶部 avatar 支持本机 emoji 图标：右键「设置图标…」打开选择器，可直接输入或粘贴任意 emoji（只取第一个字形），另有「使用默认」／右键「恢复默认图标」回到首字母渐变图标。`/api/profiles` 没有图标字段，图标按 `(服务, profile 名)` 存在 `LocalState` 的 `ServiceState.profileIcons`（UserDefaults），不写回服务端；服务地址变化或换服务时互不影响。设置 emoji 后 avatar 背景改为该 profile 调色板的淡色底，避免彩色 emoji 与饱和渐变冲突。
+
+- 选择器正文（2026-11-13 扩充）：预设从 48 个扩充为全量 gemoji 目录（约 1600 个，排除旗帜类），数据在 `HermesMac/Models/EmojiCatalog.swift`（由 gemoji `db/emoji.json` 生成，含英文 description/aliases/tags 关键词）。顶部 16 个「常用」快捷行；正文按分类（表情/人物/动物与自然/食物/活动/旅行/物品/符号）分组展示，分类可点击过滤；搜索框对关键词做子串匹配（如「cat」「rocket」），搜不到时提示可直接粘贴任意 emoji。popover 最大高度约 330pt，内部滚动。
 
 - 消息行 `MessageRowView` 新增 `profileEmoji` 参与 `Equatable` 比较，否则改图标后已渲染的历史消息头像不会刷新（第 24 条性能改动后行会被跳过重算）。
 - 菜单项到 popover 之间延迟 60ms 再呈现，避免菜单关闭与 popover 同一次 runloop 冲突。
