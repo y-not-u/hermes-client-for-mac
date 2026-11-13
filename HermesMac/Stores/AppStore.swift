@@ -4,6 +4,8 @@ import AppKit
 
 @MainActor @Observable final class AppStore {
     let botScreen = BotScreenStore()
+    /// Restored at init so the first frame already matches the saved pane state.
+    let restoreBotScreenOpen = LocalPrefs.botScreenOpen
     let local: LocalState
     var address: String
     var profiles: [Profile] = []

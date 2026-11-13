@@ -62,6 +62,10 @@ import OSLog
             ContentView(store: store).tint(Color.accentColor).frame(minWidth: 800, minHeight: 540)
                 .onAppear { delegate.configure(store: store) }
                 .task { if !store.connected && !store.connecting { await store.connect() } }
+                .task {
+                    // Restore the computer pane from the previous run once connected.
+                    if store.restoreBotScreenOpen, !store.botScreen.isOpen { await store.botScreen.open() }
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1120, height: 760)

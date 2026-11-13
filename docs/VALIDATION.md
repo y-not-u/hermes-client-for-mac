@@ -1,5 +1,17 @@
 # 验证与人工验收
 
+### 2026-11-13 窗口与面板尺寸本地持久化
+
+窗口大小与位置、中间会话列表栏拖动后的宽度、聊天/电脑分隔条位置、电脑面板开关状态均保存在本机 UserDefaults，重启后恢复。
+
+- 窗口 frame：`NSWindow.setFrameAutosaveName("mainWindow")`（`ContentView` 的 `WindowAccessor` 内），由 AppKit 自动保存/恢复。
+- 会话列表宽度：`HSplitView` 分隔条拖动后记录，`SessionListWidthRecorder`（贴在列表 pane 上的 `NSViewRepresentable`）在 `layout()` 里去抖 0.3 秒写入 `LocalPrefs.sessionListWidth`；首次启动无记录时用 `idealWidth` 260，并把首次布局宽度写入。宽度未用 `@State` 绑定（HSplitView 自管分隔条），避免每次拖动重建视图树。
+- 聊天/电脑分隔：`ChatComputerSplit.fraction` 初始读 `LocalPrefs.chatSplitFraction`（默认 0.5）；拖动 `onEnded` 与无障碍 `accessibilityAdjustableAction`（`onChange(of: fraction)`）都写入。
+- 电脑面板开关：`BotScreenStore.open()/close()` 写 `LocalPrefs.botScreenOpen`；`AppStore.restoreBotScreenOpen` 在 `init` 读取，`HermesMacApp` 连接后的独立 `.task` 里恢复（`open()` 需要已连接的 client，不能在 init 里直接调）。
+- 新文件 `HermesMac/Stores/LocalPrefs.swift`：全局（非按服务）布局偏好，键 `layout.windowFrame`（预留，实际窗口 frame 走 autosave）、`layout.sessionListWidth`、`layout.chatSplitFraction`、`layout.botScreenOpen`；CGRect 以原始字节存 `Data`。
+- 注意：UI fixture 模式（`--bot-screen-fixture`）仍用独立 UserDefaults suite，不会读写真实偏好；但 `LocalPrefs` 走 `.standard`，UI 测试若断言布局需留意。
+- `swiftc -typecheck` 通过；`./script/test.sh` 166 项 0 失败；`./script/build_and_run.sh` 构建启动正常（`defaults` 中可见 `NSWindow Frame mainWindow` 与 `layout.sessionListWidth`）。拖动分隔条后的重启恢复未做人工验收。
+
 ### 2026-11-12 profile 自定义 emoji 图标
 
 侧边栏 avatar 与聊天顶部 avatar 支持本机 emoji 图标：右键「设置图标…」打开选择器，可直接输入或粘贴任意 emoji（只取第一个字形），另有「使用默认」／右键「恢复默认图标」回到首字母渐变图标。`/api/profiles` 没有图标字段，图标按 `(服务, profile 名)` 存在 `LocalState` 的 `ServiceState.profileIcons`（UserDefaults），不写回服务端；服务地址变化或换服务时互不影响。设置 emoji 后 avatar 背景改为该 profile 调色板的淡色底，避免彩色 emoji 与饱和渐变冲突。

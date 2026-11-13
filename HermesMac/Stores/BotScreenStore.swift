@@ -58,13 +58,16 @@ import Observation
     }
     func open() async {
         isOpen = true
+        LocalPrefs.botScreenOpen = true
         await refresh()
         if status?.running == true { await reconnectViewer() }
         beginPolling()
     }
     func close() async {
-        isOpen = false; retryTask?.cancel(); retryTask = nil; pollTask?.cancel(); pollTask = nil
+        isOpen = false
+        LocalPrefs.botScreenOpen = false
         // Hiding immediately invalidates pending observe replies, before a release awaits network IO.
+        retryTask?.cancel(); retryTask = nil; pollTask?.cancel(); pollTask = nil
         let oldClient = client; let oldKey = key; let oldID = viewerID; let owned = connected && !viewerID.isEmpty
         epoch = UUID(); statusRevision = UUID(); busy = false; viewer = nil; viewerConnected = false
         if owned, let oldClient, let oldKey {

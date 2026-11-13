@@ -16,7 +16,8 @@ struct ContentView: View {
 
             HSplitView {
                 SessionListView(store: store)
-                    .frame(minWidth: 220, idealWidth: 260, maxWidth: 380)
+                    .frame(minWidth: 220, idealWidth: LocalPrefs.sessionListWidth ?? 260, maxWidth: 380)
+                    .background(SessionListWidthRecorder())
 
                 ChatComputerSplit(isOpen: store.botScreen.isOpen, expanded: computerExpanded) {
                     ChatView(store: store, onOpenComputer: {
@@ -37,6 +38,10 @@ struct ContentView: View {
             window.titlebarAppearsTransparent = true
             window.styleMask.insert(.fullSizeContentView)
             window.isMovableByWindowBackground = true
+            // AppKit persists the frame in UserDefaults under this name.
+            if window.frameAutosaveName.isEmpty {
+                window.setFrameAutosaveName("mainWindow")
+            }
         })
     }
 }
@@ -48,7 +53,7 @@ struct ChatComputerSplit<Chat: View, Computer: View>: View {
     let expanded: Bool
     @ViewBuilder var chat: () -> Chat
     @ViewBuilder var computer: () -> Computer
-    @State private var fraction: CGFloat = 0.5
+    @State private var fraction: CGFloat = LocalPrefs.chatSplitFraction ?? 0.5
     @State private var dragOrigin: CGFloat?
 
     var body: some View {
@@ -82,7 +87,11 @@ struct ChatComputerSplit<Chat: View, Computer: View>: View {
                                 if dragOrigin == nil { dragOrigin = fraction }
                                 fraction = min(1, max(0, (dragOrigin ?? fraction) + value.translation.width / available))
                             }
-                            .onEnded { _ in dragOrigin = nil })
+                            .onEnded { _ in
+                                dragOrigin = nil
+                                // Persist the divider position once the drag settles.
+                                LocalPrefs.chatSplitFraction = fraction
+                            })
                         .accessibilityLabel("调整聊天与电脑宽度")
                         .accessibilityAdjustableAction { direction in
                             switch direction {
@@ -90,6 +99,10 @@ struct ChatComputerSplit<Chat: View, Computer: View>: View {
                             case .decrement: fraction = max(0, fraction - 0.05)
                             @unknown default: break
                             }
+                        }
+                        .onChange(of: fraction) { _, value in
+                            // Keyboard/accessibility adjustments bypass the drag gesture.
+                            LocalPrefs.chatSplitFraction = value
                         }
                 }
             }
@@ -327,6 +340,58 @@ struct WindowAccessor: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         if let window = nsView.window {
             configure(window)
+        }
+    }
+}
+
+/// Records the session-list pane width while the HSplitView divider is
+/// dragged. The width only stabilizes when the drag ends, so writes debounce
+/// through a trailing delay.
+struct SessionListWidthRecorder: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = RecordingView()
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class RecordingView: NSView {
+        private var pendingWidth: CGFloat?
+        private var saveWorkItem: DispatchWorkItem?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard window != nil else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let width = self.ownWidth else { return }
+                // First layout adopts the saved width; afterwards record changes.
+                if LocalPrefs.sessionListWidth == nil, width >= 220 {
+                    LocalPrefs.sessionListWidth = width
+                }
+            }
+        }
+
+        override func layout() {
+            super.layout()
+            guard let width = ownWidth, width >= 220 else { return }
+            // Skip the initial layout that only echoes the restored ideal width.
+            guard LocalPrefs.sessionListWidth != nil else {
+                LocalPrefs.sessionListWidth = width
+                return
+            }
+            pendingWidth = width
+            saveWorkItem?.cancel()
+            let item = DispatchWorkItem { [pendingWidth] in
+                if let width = pendingWidth { LocalPrefs.sessionListWidth = width }
+            }
+            saveWorkItem = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
+        }
+
+        private var ownWidth: CGFloat? {
+            // The recorder sits inside the pane; its width equals the pane width.
+            guard let superview = superview, window != nil else { return nil }
+            return superview.bounds.width
         }
     }
 }
