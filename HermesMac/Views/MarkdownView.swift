@@ -277,5 +277,24 @@ private struct MarkdownLineView: View, Equatable {
         let content = InlineMarkdown.parse(value)
         return Text(content)
             .modifier(MarkdownLinkCursor(enabled: content.runs.contains { $0.link != nil }))
+            .environment(\.openURL, MarkdownLinkAction.handler)
+    }
+}
+
+// MARK: - Link Handling
+
+/// Opens markdown link clicks that survived `MarkdownLinkTarget` normalisation.
+/// Local files open through `NSWorkspace`; everything else keeps the system behaviour.
+enum MarkdownLinkAction {
+    static let handler = OpenURLAction { url in
+        switch MarkdownLinkTarget.resolve(url) {
+        case .system:
+            return .systemAction
+        case .localFile(let fileURL):
+            NSWorkspace.shared.open(fileURL)
+            return .handled
+        case .unsupported:
+            return .discarded
+        }
     }
 }

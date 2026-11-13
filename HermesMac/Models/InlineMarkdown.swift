@@ -62,7 +62,7 @@ enum InlineMarkdown {
             }
         }
 
-        guard !boundaries.isEmpty else { return nativeParse(source) }
+        guard !boundaries.isEmpty else { return normalizedLinks(nativeParse(source)) }
         var marker = "HermesStrongBoundary"
         while source.contains(marker) { marker += "X" }
         var normalized = ""
@@ -74,11 +74,24 @@ enum InlineMarkdown {
             }
             normalized.append(characters[index])
         }
-        var result = nativeParse(normalized)
+        var result = normalizedLinks(nativeParse(normalized))
         // Removing the temporary letters from the attributed result preserves
         // native links, nested emphasis and code attributes, without hidden text.
         while let range = result.range(of: marker) {
             result.removeSubrange(range)
+        }
+        return result
+    }
+
+    /// Foundation keeps bare and relative destinations as scheme-less URLs. SwiftUI hands
+    /// those to LaunchServices, which answers paramErr (-50) and shows the system alert
+    /// "应用程序无法打开。", so each link becomes a proper URL or loses the link attribute.
+    private static func normalizedLinks(_ value: AttributedString) -> AttributedString {
+        guard value.runs.contains(where: { $0.link != nil }) else { return value }
+        var result = value
+        for run in value.runs {
+            guard let link = run.link else { continue }
+            result[run.range].link = MarkdownLinkTarget.linkURL(for: link)
         }
         return result
     }

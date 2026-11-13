@@ -131,6 +131,7 @@ struct MarkdownTableView: View, Equatable {
             ForEach(table.headers.indices, id: \.self) { column in
                 Text(cells[column].content)
                     .modifier(MarkdownLinkCursor(enabled: cells[column].content.runs.contains { $0.link != nil }))
+                    .environment(\.openURL, MarkdownLinkAction.handler)
                     .font(.system(size: fontSize, weight: header ? .semibold : .regular))
                     .multilineTextAlignment(textAlignment(for: column))
                     .frame(width: widths[column], alignment: alignment(for: column))
