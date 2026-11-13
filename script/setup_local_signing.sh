@@ -25,14 +25,15 @@ if [ -n "${HERMES_SIGNING_KEYCHAIN:-}" ]; then
   signing_keychain_args+=("$HERMES_SIGNING_KEYCHAIN")
 fi
 echo "[signing] Starting: check existing signing identity"
-if security find-identity -v -p codesigning "${signing_keychain_args[@]}" | grep -Fq "\"$IDENTITY\""; then
+# bash 3.2 (macOS /bin/bash) treats an empty "${arr[@]}" as an unbound variable under set -u.
+if security find-identity -v -p codesigning ${signing_keychain_args[@]+"${signing_keychain_args[@]}"} | grep -Fq "\"$IDENTITY\""; then
   echo "$IDENTITY is already available."
   exit 0
 fi
 echo "[signing] Completed: check existing signing identity"
 # Never replace an existing key: its certificate defines the app's stable identity.
 echo "[signing] Starting: check existing certificate"
-if security find-certificate -c "$IDENTITY" "${signing_keychain_args[@]}" >/dev/null 2>&1; then
+if security find-certificate -c "$IDENTITY" ${signing_keychain_args[@]+"${signing_keychain_args[@]}"} >/dev/null 2>&1; then
   echo "Existing certificate is not a valid signing identity. Check its private key and code-signing trust in Keychain Access; do not recreate it." >&2
   exit 1
 fi
