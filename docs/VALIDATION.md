@@ -6,8 +6,10 @@
 
 - 消息行 `MessageRowView` 新增 `profileEmoji` 参与 `Equatable` 比较，否则改图标后已渲染的历史消息头像不会刷新（第 24 条性能改动后行会被跳过重算）。
 - 菜单项到 popover 之间延迟 60ms 再呈现，避免菜单关闭与 popover 同一次 runloop 冲突。
-- 新增 `Tests/HermesMacTests/StateTests.swift` 中的 `testProfileIconPersistsLocallyAndFallsBackToInitial`（重载后仍保留、多字形输入只留一个、清除后回到默认）。**该测试尚未执行**：本机只有 Command Line Tools，没有 Xcode，`swift test` 因 `no such module 'XCTest'` 失败，`./script/build_and_run.sh --build` 也因缺少本地签名证书无法运行。提交前必须在装有 Xcode 的环境跑 `./script/test.sh`。
-- 目前只做了 `swiftc -typecheck`（应用目标全部源码，macOS 14 目标）编译验证；界面（右键菜单、popover 定位、emoji 缩放）未做人工验收。
+- 新增 `Tests/HermesMacTests/StateTests.swift` 中的 `testProfileIconPersistsLocallyAndFallsBackToInitial`（重载后仍保留、多字形输入只留一个、清除后回到默认）。
+- 安装 Xcode 26.6 (17F113) 后复验（2026-11-12）：`./script/test.sh` 166 项，1 项 opt-in live test 跳过，0 失败；单跑上述用例通过（0.005 秒）。`./script/build_and_run.sh --build` Debug 构建通过，`DerivedData/Build/Products/Debug/HermesMac.app` 验签为 `HermesMac Local Development`，`codesign --verify --deep --strict` 通过，二进制 `x86_64 arm64`。
+- 顺带修复 `script/setup_local_signing.sh` 在 macOS 自带 bash 3.2 下的 `set -u` 报错（空数组 `"${signing_keychain_args[@]}"` 被判为未绑定变量），改用 `${arr[@]+"${arr[@]}"}` 写法。
+- 界面（右键菜单、popover 定位、emoji 缩放）仍未做人工验收，需要在实际服务上打开侧边栏与聊天顶部头像确认。
 
 ### 2026-11-12 流式回复期间的 CPU 占用
 
@@ -18,7 +20,7 @@
 - 改动二：`Conversation` 将连续 delta 最多每 100ms 合并提交一次；首个片段立即提交，已处理的消息和状态事件及快照、切换会话等操作先提交缓冲文本，未知事件不触发提交。
 - 固定负载对比：临时 Debug 探针以相同的 24 条合成历史、50ms 间隔和 200 个 delta 驱动真实聊天视图。33.3ms 提交间隔耗 CPU 4.687 秒、平均 46.9%；100ms 间隔耗 CPU 2.568 秒、平均 25.6%。两次均生成 1890 字，耗时约 10 秒。这是单次合成窗口测量，并非真实服务或 HEAD 基线。探针代码已删除。
 - **未验证项**：没有取得 HEAD 的可比基线。用 `git worktree` 在独立目录构建 HEAD 对照版时冷编译超过 30 分钟被中止，因此上面只有同一份代码内部的对照数字，不能作为「相对修复前提升多少」的结论。
-- 新增 `Tests/HermesMacTests/StreamingCoalescingTests.swift`（涵盖突发合并、未知事件、定时冲刷、完成/错误/工具/快照边界、interim 顺序及离开会话冲刷）。**该测试尚未执行**：本机只有 Command Line Tools，没有 Xcode，`swift build --build-tests` 因 `no such module 'XCTest'` 失败。提交前必须在装有 Xcode 的环境跑 `./script/test.sh`。
+- 新增 `Tests/HermesMacTests/StreamingCoalescingTests.swift`（涵盖突发合并、未知事件、定时冲刷、完成/错误/工具/快照边界、interim 顺序及离开会话冲刷）。2026-11-12 在 Xcode 26.6 下已执行：9 项全部通过（随 `./script/test.sh` 全量 166 项跑通）。
 - 目前只做了 `swift build`（Debug，应用目标）编译验证，未做界面人工验收，也未在真实服务上观察流式占用的变化。
 
 ### 2026-11-06 审批请求系统通知
