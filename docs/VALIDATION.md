@@ -1,5 +1,11 @@
 # 验证与人工验收
 
+### 2026-11-15 回复完成 Dock 数字角标
+
+后台成功完成回答时，Dock 角标按回复完成通知次数累加（跨 profile 合计）；应用回到前台时清零，重新启动也从零开始。前台回复及审批通知不计入。角标通过 `NSApp.dockTile.badgeLabel` 更新，不依赖系统横幅是否展示；通知授权请求增加 `.badge`。
+
+新增 `StateTests.testReplyDockBadgeCountsBackgroundCompletionsAndClearsOnActivation` 覆盖累加、审批不计数、清零、前台不计数及再次进入后台后的重新计数。`./script/test.sh`：176 项，1 项 opt-in live test 跳过，0 失败；`./script/build_and_run.sh --build` Debug 构建及 `git diff --check` 通过。实际 Dock 显示及点击 Dock/通知后激活清零仍待人工验收。
+
 ### 2026-11-13 窗口与面板尺寸本地持久化
 
 窗口大小与位置、中间会话列表栏拖动后的宽度、聊天/电脑分隔条位置、电脑面板开关状态均保存在本机 UserDefaults，重启后恢复。

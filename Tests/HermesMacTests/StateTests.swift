@@ -112,6 +112,34 @@ import AppKit
         XCTAssertEqual(notifications.count, 2)
     }
 
+    func testReplyDockBadgeCountsBackgroundCompletionsAndClearsOnActivation() {
+        var active = false
+        var badges: [String?] = []
+        let notifications = ReplyNotifications(isAppActive: { active }, updateDockBadge: { badges.append($0) })
+
+        notifications.replyCompleted(profile: "a", text: "first answer")
+        notifications.replyCompleted(profile: "b", text: "second answer")
+        XCTAssertEqual(notifications.pendingReplyCount, 2)
+        XCTAssertEqual(badges, ["1", "2"])
+
+        notifications.approvalRequested(profile: "a", description: "Run command")
+        XCTAssertEqual(notifications.pendingReplyCount, 2)
+        XCTAssertEqual(badges.count, 2)
+
+        active = true
+        notifications.clearReplyBadge()
+        XCTAssertEqual(notifications.pendingReplyCount, 0)
+        XCTAssertNil(badges.last!)
+        notifications.replyCompleted(profile: "a", text: "foreground answer")
+        XCTAssertEqual(notifications.pendingReplyCount, 0)
+        XCTAssertEqual(badges.count, 3)
+
+        active = false
+        notifications.replyCompleted(profile: "a", text: "another answer")
+        XCTAssertEqual(notifications.pendingReplyCount, 1)
+        XCTAssertEqual(badges.last!, "1")
+    }
+
     func testReplyNotificationsOnlyForSuccessfulBackgroundCompletion() {
         var active = true
         var replies: [(ConversationKey, String, String)] = []
