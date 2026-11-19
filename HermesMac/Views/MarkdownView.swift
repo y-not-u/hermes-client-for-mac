@@ -23,6 +23,12 @@ struct MarkdownView: View {
                         RemoteImageView(request: request, store: media.store, preview: media.preview)
                             .id(request)
                     }
+                case .file(let path):
+                    if let media {
+                        RemoteFileView(request: RemoteFileRequest(conversation: media.conversation, messageID: media.messageID, path: path),
+                                       store: media.store)
+                            .id(path)
+                    }
                 }
             }
         }

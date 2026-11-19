@@ -1,5 +1,13 @@
 # 验证与人工验收
 
+### 2026-11-19 非图片 `MEDIA:` 文件下载
+
+助手回复中的 `MEDIA:/home/egg/.hermes/exports/openbot/openbot.lan.crt` 原先因为扩展名不在图片列表而保留为纯文本，无法点击。现改为：图片扩展名走原图片卡片，其余绝对路径生成文件卡片（文件名、远程路径、下载按钮、失败重试、在 Finder 中显示、复制远程路径）。下载复用 `/api/fs/read-data-url`，新增 `RemoteFileDecoder` 校验任意 `data:<mime>;base64,…` 与 16 MB 上限；字节不进入图片缓存，只在用户确认 `NSSavePanel` 后原子写入。
+
+新增/更新测试：`MediaTests.testNonImageDirectivesBecomeDownloadCards`（`.crt`、带空格 `.zip`、`~/` 路径、去重）、`testFileDecoderAcceptsAnyMimeAndRejectsMalformedPayloads`（`application/x-x509-ca-cert`、空文件、非 data URL、超限、默认文件名）、`testFileDownloadUsesAuthenticatedReadAndRejectsEmptyPayload`（路径/profile/`session_id` 编码、session token、413、跨服务拒绝），以及原 `testCodeQuotesAndNonImagesDoNotTriggerDownloads` 改为 `testCodeQuotesAndRemoteURLsDoNotBecomeCards`。
+
+`./script/test.sh`：179 项通过，1 项 opt-in live test 跳过，0 失败；`./script/build_and_run.sh --build` Debug 构建成功。尚未用真实服务人工点击该 `.crt` 的下载与保存面板，也未在 0.21.5 实测服务上验证 `read-data-url` 对非图片扩展名的返回（源码只按 `mimetypes` 猜测，无图片白名单）；此项待人验收。
+
 ### 2026-11-15 回复完成 Dock 数字角标
 
 后台成功完成回答时，Dock 角标按回复完成通知次数累加（跨 profile 合计）；应用回到前台时清零，重新启动也从零开始。前台回复及审批通知不计入。角标通过 `NSApp.dockTile.badgeLabel` 更新，不依赖系统横幅是否展示；通知授权请求增加 `.badge`。

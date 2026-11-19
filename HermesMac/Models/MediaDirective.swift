@@ -4,6 +4,8 @@ enum MarkdownSegment: Equatable {
     case text(String)
     case code(String, language: String)
     case image(String)
+    /// Non-image `MEDIA:` path: no inline preview, only a user-initiated download.
+    case file(String)
 }
 
 /// One parse per source revision, owned by a single mounted Markdown view.
@@ -72,11 +74,16 @@ enum MediaDirective {
                 let path = (1...4).first(where: { match.range(at: $0).location != NSNotFound })
                     .map { source.substring(with: match.range(at: $0)) } ?? ""
                 let ext = (path as NSString).pathExtension.lowercased()
-                guard (path.hasPrefix("/") || path.hasPrefix("~/")), imageExtensions.contains(ext) else { continue }
+                // Only absolute paths the service can resolve; every extension other than a
+                // previewable image becomes a download card instead of unclickable text.
+                guard path.hasPrefix("/") || path.hasPrefix("~/"),
+                      !(path as NSString).lastPathComponent.isEmpty else { continue }
                 let before = source.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
                 if !before.trimmingCharacters(in: .whitespaces).isEmpty { buffer.append(before) }
                 flush()
-                if seen.insert(path).inserted { result.append(.image(path)) }
+                if seen.insert(path).inserted {
+                    result.append(imageExtensions.contains(ext) ? .image(path) : .file(path))
+                }
                 cursor = NSMaxRange(match.range)
             }
             let remainder = source.substring(from: cursor)
@@ -88,6 +95,15 @@ enum MediaDirective {
 }
 
 struct RemoteImageRequest: Hashable, Sendable {
+    let conversation: ConversationKey
+    let messageID: String
+    let path: String
+    var filename: String { (path as NSString).lastPathComponent }
+}
+
+/// Identity of one non-image `MEDIA:` attachment. Downloads are not cached: the
+/// user may save the same path twice after the service rewrites it.
+struct RemoteFileRequest: Hashable, Sendable {
     let conversation: ConversationKey
     let messageID: String
     let path: String

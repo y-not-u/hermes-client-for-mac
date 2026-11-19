@@ -19,7 +19,7 @@
 | GET `/api/sessions?profile=…&exclude_sources=cron` | 当前 profile 的历史，排除定时任务运行会话，40 条分页 |
 | GET `/api/sessions/search?profile=…&q=…&exclude_sources=cron` | 搜索当前 profile 历史，排除定时任务运行会话 |
 | GET `/api/sessions/{storedID}/messages?profile=…` | 首屏读取最新历史、按需读取更早记录，每页 20 条，`inline_images=false` |
-| GET `/api/fs/read-data-url?path=…&profile=…&session_id=…` | 按助手回答中的 `MEDIA:` 路径读取图片，返回 `dataUrl`；使用持久会话 ID 和现有认证 |
+| GET `/api/fs/read-data-url?path=…&profile=…&session_id=…` | 按助手回答中的 `MEDIA:` 路径读取图片或文件，返回 `dataUrl`；使用持久会话 ID 和现有认证 |
 | PATCH `/api/sessions/{storedID}` | JSON body 含 `profile` 和 `title`，重命名 |
 | PATCH `/api/sessions/{storedID}` | JSON body 含 `profile` 和 `archived=true`，归档；列表与搜索隐藏归档记录 |
 | DELETE `/api/sessions/{storedID}?profile=…` | 删除确认后移除所属 profile 的会话历史 |
@@ -71,11 +71,13 @@
 
 切换服务会断开旧连接并丢弃运行时映射，但 `close_on_disconnect=false` 不要求服务端停止任务。UserDefaults 中的草稿、选中会话和 profile 顺序按服务隔离；Keychain 中凭据同样按规范化地址隔离。没有导出或复制服务端配置、记忆、数据库的功能。
 
-## 回答中的远程图片
+## 回答中的远程图片与文件
 
-助手回答里的 `MEDIA:/absolute/path.png` 或 `MEDIA:~/path.png` 显示为图片卡片，支持 png、jpg/jpeg、gif、webp、bmp。带空格的路径可用单引号、双引号或反引号包住路径。代码围栏、引用、行内代码示例、用户消息和工具详情不会触发图片读取；非图片指令保留为文字。图片卡片保留在正文中的位置，同一回答里的相同路径只展示一次。
+助手回答里的 `MEDIA:/absolute/path.png` 或 `MEDIA:~/path.png` 显示为图片卡片，支持 png、jpg/jpeg、gif、webp、bmp。带空格的路径可用单引号、双引号或反引号包住路径。代码围栏、引用、行内代码示例、用户消息和工具详情不会触发读取；`MEDIA:` 指向的其他绝对路径（如导出的 `.crt`、`.pdf`、`.zip`）显示为文件卡片，卡片本身不发起请求，只有点击“下载”才读取。同一回答里的相同路径只展示一次。
 
 图片请求沿用 `HermesClient.rest` 的 Bearer/session token 认证、令牌刷新与服务地址前缀。只请求用户配置的服务上的 `/api/fs/read-data-url`，传 `profile` 和持久 `session_id`，不向其他站点发送凭据、不回退到更宽的文件读取接口。文件、会话或接口不存在、权限拒绝、大小限制等失败会保留远程路径并显示重试按钮。客户端接受最多 16 MB 的 base64 图片，解码尺寸最多 4000 万像素；预览缩略图最长边 1600 像素。gif 预览为静态首帧。
+
+非图片文件复用同一接口：服务端按扩展名返回 `data:<mime>;base64,…`（`.crt` 为 `application/x-x509-ca-cert`），客户端只做 base64 与 16 MB 上限校验。下载结果不进入 200 MB 图片缓存，也不在未确认时写入磁盘：点击“下载”后读取字节，随即弹出 `NSSavePanel`，用户选定位置（默认文件名为远程路径的文件名）才 `atomic` 写入；取消保存则丢弃字节。卡片显示文件名、远程路径、失败原因与“在 Finder 中显示”，右键可复制远程路径。选择使用 `read-data-url` 而不是 `/api/fs/download`，因为当前固定的服务基线已提供前者，后者在 0.21.5 实测服务上未验证。
 
 原图缓存在 `~/Library/Caches/com.hermes.mac/Media`，缓存键包含 `(service, profile, storedID, messageID, path)`，避免不同会话复用 scratch 路径时串图。并发读取合并；缓存可跨应用重启读取，上限 200 MB，按保存时间淘汰旧文件。下载过的图片可在源文件被清理后继续查看，直到本地缓存被淘汰。点击图片打开大图并缩放，保存按钮导出原图。大图由聊天根视图呈现，查看期间暂停聊天自动滚动。
 

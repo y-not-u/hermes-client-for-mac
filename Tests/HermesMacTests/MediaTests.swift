@@ -70,6 +70,9 @@ private actor ConcurrentImageFetches {
     private func request(service: String = "https://media.fixture", profile: String = "financial", session: String = "stored", message: String = "message", path: String = "/home/egg/.hermes/profiles/financial/cache/scratch/main.png") -> RemoteImageRequest {
         RemoteImageRequest(conversation: ConversationKey(service: service, profile: profile, storedID: session), messageID: message, path: path)
     }
+    private func fileRequest(service: String, profile: String = "financial", session: String = "stored", message: String = "message", path: String = "/home/egg/.hermes/exports/openbot/openbot.lan.crt") -> RemoteFileRequest {
+        RemoteFileRequest(conversation: ConversationKey(service: service, profile: profile, storedID: session), messageID: message, path: path)
+    }
     private func client(credentials: Credentials) throws -> HermesClient {
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MediaHTTPProtocol.self]
         return try HermesClient(address: "https://media.fixture/prefix", credentials: credentials, session: URLSession(configuration: config))
@@ -84,13 +87,70 @@ private actor ConcurrentImageFetches {
         XCTAssertEqual(MediaDirective.segments("MEDIA:`/tmp/含 空格.png`", renderMedia: true), [.image("/tmp/含 空格.png")])
     }
 
-    func testCodeQuotesAndNonImagesDoNotTriggerDownloads() {
-        let text = "```python\nMEDIA:/tmp/example.png\n```\n> MEDIA:/tmp/quote.png\n例子 `MEDIA:/tmp/inline.png`\nMEDIA:/tmp/report.pdf\nMEDIA:https://third-party.test/image.png\nMEDIA:/tmp/unfinished\n~~~\nMEDIA:/tmp/fenced.png\n~~~"
+    func testCodeQuotesAndRemoteURLsDoNotBecomeCards() {
+        let text = "```python\nMEDIA:/tmp/example.png\n```\n> MEDIA:/tmp/quote.png\n例子 `MEDIA:/tmp/inline.png`\nMEDIA:/tmp/report.pdf\nMEDIA:https://third-party.test/image.png\n~~~\nMEDIA:/tmp/fenced.png\n~~~"
         let segments = MediaDirective.segments(text, renderMedia: true)
         XCTAssertFalse(segments.contains { if case .image = $0 { return true }; return false })
         XCTAssertTrue(segments.contains(.code("MEDIA:/tmp/example.png", language: "python")))
         XCTAssertTrue(segments.contains(.code("MEDIA:/tmp/fenced.png", language: "")))
+        XCTAssertTrue(segments.contains(.file("/tmp/report.pdf")))
+        XCTAssertTrue(segments.contains(.text("MEDIA:https://third-party.test/image.png")))
         XCTAssertEqual(MediaDirective.segments("```\nMEDIA:/tmp/incomplete.png", renderMedia: true), [.code("MEDIA:/tmp/incomplete.png", language: "")])
+    }
+
+    func testNonImageDirectivesBecomeDownloadCards() {
+        let text = "证书\nMEDIA:/home/egg/.hermes/exports/openbot/openbot.lan.crt\nMEDIA:'/tmp/含 空格.zip'\nMEDIA:/tmp/图.png\nMEDIA:~/exports/dump.bin 说明"
+        XCTAssertEqual(MediaDirective.segments(text, renderMedia: true), [
+            .text("证书"),
+            .file("/home/egg/.hermes/exports/openbot/openbot.lan.crt"),
+            .file("/tmp/含 空格.zip"),
+            .image("/tmp/图.png"),
+            .file("~/exports/dump.bin"), .text(" 说明")
+        ])
+        XCTAssertEqual(MediaDirective.segments("MEDIA:/home/egg/.hermes/exports/openbot/openbot.lan.crt", renderMedia: false),
+                       [.text("MEDIA:/home/egg/.hermes/exports/openbot/openbot.lan.crt")])
+        XCTAssertEqual(MediaDirective.segments("MEDIA:/tmp/x.crt\nMEDIA:/tmp/x.crt", renderMedia: true), [.file("/tmp/x.crt")])
+    }
+
+    func testFileDecoderAcceptsAnyMimeAndRejectsMalformedPayloads() throws {
+        let payload = Data("-----BEGIN CERTIFICATE-----".utf8)
+        XCTAssertEqual(try RemoteFileDecoder.dataURL("data:application/x-x509-ca-cert;base64," + payload.base64EncodedString()), payload)
+        XCTAssertEqual(try RemoteFileDecoder.dataURL("data:application/octet-stream;base64,"), Data())
+        for value in ["https://example.test/a.crt", "data:text/plain,SGk=", "data:text/plain;base64,!bad!"] {
+            XCTAssertThrowsError(try RemoteFileDecoder.dataURL(value))
+        }
+        XCTAssertThrowsError(try RemoteFileDecoder.dataURL("data:application/octet-stream;base64," + String(repeating: "A", count: ((RemoteFileDecoder.maxBytes + 2) / 3) * 4 + 4)))
+        XCTAssertEqual(RemoteFileDecoder.suggestedName(for: "/home/egg/.hermes/exports/openbot/openbot.lan.crt"), "openbot.lan.crt")
+        XCTAssertEqual(RemoteFileDecoder.suggestedName(for: "/tmp/folder/"), "folder")
+        XCTAssertEqual(RemoteFileDecoder.suggestedName(for: "/"), "download")
+    }
+
+    func testFileDownloadUsesAuthenticatedReadAndRejectsEmptyPayload() async throws {
+        let payload = Data("-----BEGIN CERTIFICATE-----".utf8)
+        MediaHTTPProtocol.configure(body: try JSONEncoder().encode(JSON.object(["dataUrl": .string("data:application/x-x509-ca-cert;base64," + payload.base64EncodedString())])))
+        let client = try client(credentials: Credentials(sessionToken: "test-token"))
+        let attachment = fileRequest(service: client.service)
+        let downloaded = try await client.fileData(for: attachment)
+        XCTAssertEqual(downloaded, payload)
+        let sent = try XCTUnwrap(MediaHTTPProtocol.requests.first)
+        XCTAssertEqual(sent.url?.path, "/prefix/api/fs/read-data-url")
+        let query = try XCTUnwrap(URLComponents(url: sent.url!, resolvingAgainstBaseURL: false)?.queryItems)
+        XCTAssertEqual(query.first { $0.name == "path" }?.value, attachment.path)
+        XCTAssertEqual(query.first { $0.name == "profile" }?.value, "financial")
+        XCTAssertEqual(query.first { $0.name == "session_id" }?.value, "stored")
+        XCTAssertEqual(sent.value(forHTTPHeaderField: "X-Hermes-Session-Token"), "test-token")
+
+        MediaHTTPProtocol.configure(body: try JSONEncoder().encode(JSON.object(["dataUrl": .string("https://example.test/a.crt")])))
+        do { _ = try await client.fileData(for: attachment); XCTFail("Expected payload rejection") }
+        catch let error as ClientError { XCTAssertTrue(error.message.contains("文件")) }
+
+        MediaHTTPProtocol.configure(status: 413, body: Data("{\"detail\":\"File too large\"}".utf8))
+        do { _ = try await client.fileData(for: attachment); XCTFail("Expected HTTP error") }
+        catch let error as ClientError { XCTAssertEqual(error.httpStatus, 413); XCTAssertTrue(error.message.contains("413")) }
+
+        MediaHTTPProtocol.configure(body: Data())
+        do { _ = try await client.fileData(for: fileRequest(service: "https://other.fixture")); XCTFail("Expected service mismatch") }
+        catch { XCTAssertTrue(MediaHTTPProtocol.requests.isEmpty) }
     }
 
     func testDecoderRejectsMalformedOversizedAndNonImagePayloads() throws {

@@ -3,6 +3,35 @@ import CryptoKit
 import ImageIO
 import UniformTypeIdentifiers
 
+/// Non-image attachments reuse `/api/fs/read-data-url`, so the payload is any
+/// `data:<mime>;base64,…`. Nothing is written to disk until the user picks a
+/// destination in the save panel.
+enum RemoteFileDecoder {
+    static let maxBytes = 16 * 1024 * 1024
+    static func dataURL(_ value: String) throws -> Data {
+        guard let comma = value.firstIndex(of: ","),
+              value[..<comma].lowercased().hasPrefix("data:"),
+              value[..<comma].lowercased().hasSuffix(";base64") else {
+            throw ClientError(message: "文件接口未返回有效的文件内容")
+        }
+        let encoded = value[value.index(after: comma)...]
+        guard encoded.utf8.count <= ((maxBytes + 2) / 3) * 4 else {
+            throw ClientError(message: "文件超过 16 MB，无法下载")
+        }
+        guard let data = Data(base64Encoded: String(encoded)), data.count <= maxBytes else {
+            throw ClientError(message: "文件数据损坏或过大")
+        }
+        return data
+    }
+
+    /// The save panel refuses an empty name and hidden leading dots confuse it.
+    static func suggestedName(for path: String) -> String {
+        let trimmed = String(path.reversed().drop(while: { $0 == "/" }).reversed())
+        let name = (trimmed as NSString).lastPathComponent
+        return name.isEmpty || name == "/" || name == "~" || name == "." || name == ".." ? "download" : name
+    }
+}
+
 struct RemoteImageFile: Sendable {
     let url: URL
     let thumbnail: Data

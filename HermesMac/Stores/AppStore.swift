@@ -134,6 +134,12 @@ import AppKit
         }
         return try await imageCache.image(for: request) { try await client.imageData(for: request) }
     }
+    func file(for request: RemoteFileRequest) async throws -> Data {
+        guard let client, client.service == request.conversation.service else {
+            throw ClientError(message: "请先连接文件所属的 Hermes 服务")
+        }
+        return try await client.fileData(for: request)
+    }
     var profileTitle: String { profiles.first(where: { $0.name == selectedProfile })?.displayName ?? "Hermes" }
     var canSend: Bool {
         connected && !selectedProfile.isEmpty && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draftAttachments.isEmpty)

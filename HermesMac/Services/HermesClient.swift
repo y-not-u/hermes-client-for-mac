@@ -151,6 +151,12 @@ import OSLog
         try Task.checkCancellation()
         return data
     }
+    nonisolated private static func decodeFileData(_ value: String) async throws -> Data {
+        try Task.checkCancellation()
+        let data = try RemoteFileDecoder.dataURL(value)
+        try Task.checkCancellation()
+        return data
+    }
     private func refresh() async throws {
         if let refreshTask { return try await refreshTask.value }
         let token = credentials.refreshToken; let provider = credentials.provider
@@ -183,6 +189,26 @@ import OSLog
             case 403: throw ClientError(message: "服务端不允许读取这张图片（HTTP 403）", httpStatus: 403)
             case 404: throw ClientError(message: "图片已被清理、会话不存在，或此服务尚未提供图片读取接口（HTTP 404）", httpStatus: 404)
             case 413: throw ClientError(message: "图片超过服务端预览大小限制（HTTP 413）", httpStatus: 413)
+            default: throw error
+            }
+        }
+    }
+    /// Same authenticated read as images, but any extension is allowed and the
+    /// bytes are returned untouched for the save panel.
+    func fileData(for request: RemoteFileRequest) async throws -> Data {
+        guard request.conversation.service == service else { throw ClientError(message: "文件所属服务已切换") }
+        do {
+            let result = try await rest("/api/fs/read-data-url", query: [
+                URLQueryItem(name: "path", value: request.path),
+                URLQueryItem(name: "profile", value: request.conversation.profile),
+                URLQueryItem(name: "session_id", value: request.conversation.storedID)
+            ])
+            return try await Self.decodeFileData(result["dataUrl"].string)
+        } catch let error as ClientError {
+            switch error.httpStatus {
+            case 403: throw ClientError(message: "服务端不允许读取这个文件（HTTP 403）", httpStatus: 403)
+            case 404: throw ClientError(message: "文件已被清理、会话不存在，或此服务尚未提供文件读取接口（HTTP 404）", httpStatus: 404)
+            case 413: throw ClientError(message: "文件超过服务端读取大小限制（HTTP 413）", httpStatus: 413)
             default: throw error
             }
         }
