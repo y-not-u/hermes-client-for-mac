@@ -375,11 +375,13 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
     func testSupplementKeepsStreamingWithoutRedirectingActiveRequest() async throws {
         let (store, client, defaults, name) = try await prepare()
         defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
-        store.draft = "original"; await store.send()
+        let original = "original\n\nsecond paragraph"
+        store.draft = " \n\(original)\n\t"; await store.send()
+        XCTAssertEqual(store.draft, "")
         let c = try XCTUnwrap(store.current)
         try await emit(c.key.storedID, type: "message.delta", text: "partial before")
         try await eventually { c.messages.last?.text == "partial before" }
-        store.draft = "change direction"
+        store.draft = "\nchange direction\n\n"
         XCTAssertTrue(store.canSend)
         await store.send()
         XCTAssertTrue(c.generating)
@@ -390,10 +392,12 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertTrue(c.generating)
         try await emit(c.key.storedID, type: "message.complete", text: "corrected answer")
         try await eventually { !c.generating }
-        XCTAssertEqual(c.messages.map(\.text), ["original", "corrected answer", "change direction"])
+        XCTAssertEqual(c.messages.map(\.text), [original, "corrected answer", "change direction"])
         let stats = try await fixture(["action": .string("stats")])
-        XCTAssertEqual(stats["requests"].array.filter { $0["method"].string == "prompt.submit" }.count, 1)
+        let prompts = stats["requests"].array.filter { $0["method"].string == "prompt.submit" }
+        XCTAssertEqual(prompts.map { $0["params"]["text"].string }, [original])
         XCTAssertEqual(stats["requests"].array.last?["method"].string, "session.steer")
+        XCTAssertEqual(stats["requests"].array.last?["params"]["text"].string, "change direction")
         XCTAssertFalse(stats["requests"].array.contains { ["session.redirect", "session.interrupt"].contains($0["method"].string) })
     }
 
@@ -443,12 +447,13 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         let c = try XCTUnwrap(store.current)
         try await emit(c.key.storedID, type: "message.delta", text: "partial")
         try await eventually { c.messages.last?.text == "partial" }
-        store.draft = "next turn"; await store.send(queue: true)
+        store.draft = "\nnext turn\n"; await store.send(queue: true)
         try await emit(c.key.storedID, type: "message.complete", text: "original answer")
         try await eventually { !c.generating }
         XCTAssertEqual(c.messages.map(\.text), ["original", "original answer", "next turn"])
         let stats = try await fixture(["action": .string("stats")])
         XCTAssertEqual(stats["requests"].array.last?["params"]["queued"], .bool(true))
+        XCTAssertEqual(stats["requests"].array.last?["params"]["text"].string, "next turn")
         XCTAssertFalse(stats["requests"].array.contains { $0["method"].string == "session.redirect" })
     }
 
@@ -469,8 +474,10 @@ private final class StartupOfflineProtocol: URLProtocol, @unchecked Sendable {
         defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
         store.draft = "original"; await store.send()
         _ = try await fixture(["action": .string("configure"), "correction_error": .number(4004)])
-        store.draft = "retry manually"; await store.send()
-        XCTAssertEqual(store.draft, "retry manually")
+        let originalDraft = "\nretry manually\n"
+        store.draft = originalDraft; await store.send()
+        XCTAssertEqual(store.draft, originalDraft)
+        XCTAssertEqual(store.current?.messages.last?.text, "retry manually")
         XCTAssertEqual(store.current?.messages.last?.deliveryStatus, "提交失败")
         let stats = try await fixture(["action": .string("stats")])
         XCTAssertEqual(stats["requests"].array.last?["method"].string, "session.steer")

@@ -661,11 +661,13 @@ import AppKit
         // Seal already received text before inserting a correction in the transcript.
         flushFrames()
         guard canSend else { return }
+        let originalDraft = draft
+        let messageText = originalDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         if let c = current, c.generating {
-            await sendFollowUp(c, client: client, queue: queue)
+            await sendFollowUp(c, client: client, text: messageText, queue: queue)
             return
         }
-        let profile = selectedProfile; let text = draft; let epoch = generation; let startingSession = selectedSession; let originNavigation = navigation
+        let profile = selectedProfile; let epoch = generation; let startingSession = selectedSession; let originNavigation = navigation
         let sourceContext = modelContext
         let attachments = draftAttachments
         var attachmentContext = sourceContext
@@ -695,7 +697,7 @@ import AppKit
                 guard !id.isEmpty else { throw ClientError(message: "服务未返回持久会话 ID，请升级 Hermes") }
                 let key = ConversationKey(service: service, profile: profile, storedID: id)
                 c = Conversation(key: key); c.snapshot(snapshot); conversations[key] = c; touchConversation(key); bind(c)
-                sessions[profile, default: []].insert(SessionSummary(id: id, title: String(text.prefix(40))), at: 0)
+                sessions[profile, default: []].insert(SessionSummary(id: id, title: String(messageText.prefix(40))), at: 0)
                 sendingKey = key; sendingSessions.insert(key)
                 creatingSessions.removeValue(forKey: originNavigation)
                 if navigation == originNavigation || selectedProfile != profile {
@@ -704,7 +706,7 @@ import AppKit
                 let draftKey = LocalState.draftKey(profile: profile, session: startingSession)
                 let pendingDraft = local.state(service).drafts[draftKey] ?? ""
                 if navigation == originNavigation {
-                    local.update(service) { $0.drafts[LocalState.draftKey(profile: profile, session: id)] = attachments.isEmpty && pendingDraft == text ? "" : pendingDraft }
+                    local.update(service) { $0.drafts[LocalState.draftKey(profile: profile, session: id)] = attachments.isEmpty && pendingDraft == originalDraft ? "" : pendingDraft }
                     if selectedProfile == profile && selectedSession == startingSession { selectedSession = id }
                 }
             }
@@ -717,7 +719,6 @@ import AppKit
             }
             if !attachments.isEmpty { uploadingAttachments.insert(attachmentContext) }
             guard let runtime = c.runtimeID, !runtime.isEmpty else { throw ClientError(message: "会话未恢复，请重连后再发送") }
-            let messageText = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : text
             var promptParts = messageText.isEmpty ? [] : [messageText]
             for attachment in attachments {
                 let response: JSON
@@ -755,7 +756,7 @@ import AppKit
                     promptParts.append(response["ref_text"].string)
                 }
             }
-            let prompt = attachments.isEmpty ? text : promptParts.joined(separator: "\n\n")
+            let prompt = attachments.isEmpty ? messageText : promptParts.joined(separator: "\n\n")
             let sentContent = attachments.isEmpty ? nil : SentMessageContent(
                 text: messageText, attachments: attachments.map(SentAttachment.init)
             )
@@ -771,13 +772,13 @@ import AppKit
             }
             local.update(service) {
                 let targetKey = LocalState.draftKey(profile: profile, session: c.key.storedID)
-                if $0.drafts[targetKey] == text { $0.drafts[targetKey] = "" }
+                if $0.drafts[targetKey] == originalDraft { $0.drafts[targetKey] = "" }
                 let key = LocalState.draftKey(profile: profile, session: startingSession)
                 if (startingSession != nil || navigation == originNavigation || selectedProfile != profile),
-                   $0.drafts[key] == text { $0.drafts[key] = "" }
+                   $0.drafts[key] == originalDraft { $0.drafts[key] = "" }
             }
             if navigation == originNavigation && selectedProfile == profile && selectedSession == c.key.storedID {
-                if draft == text { draft = "" } else { persistDraft() }
+                if draft == originalDraft { draft = "" } else { persistDraft() }
             }
             do { _ = try await client.execute(.submitPrompt(profile: profile, runtimeID: runtime, text: prompt, images: imageInputs)) }
             catch { guard epoch == generation else { return }; c.uncertain = true; c.error = "发送结果未知：\(error.localizedDescription)。请重新查询状态，不会自动重发。" }
@@ -807,9 +808,10 @@ import AppKit
         flushTask?.cancel(); flushTask = nil
         let frames = buffered; buffered = []; frames.forEach { route($0) }; pruneConversationCache()
     }
-    private func sendFollowUp(_ c: Conversation, client: HermesClient, queue: Bool) async {
+    private func sendFollowUp(_ c: Conversation, client: HermesClient, text: String, queue: Bool) async {
         guard let runtime = c.runtimeID else { return }
-        let text = draft; let epoch = generation; let origin = navigation
+        let originalDraft = draft
+        let epoch = generation; let origin = navigation
         let profile = c.key.profile
         sendingSessions.insert(c.key)
         defer { if epoch == generation { sendingSessions.remove(c.key); pruneConversationCache() } }
@@ -856,8 +858,8 @@ import AppKit
                 c.error = "补充消息未提交：\(failure.localizedDescription)"
                 let key = LocalState.draftKey(profile: profile, session: c.key.storedID)
                 if (local.state(service).drafts[key] ?? "").isEmpty {
-                    local.update(service) { $0.drafts[key] = text }
-                    if navigation == origin && current === c && draft.isEmpty { draft = text }
+                    local.update(service) { $0.drafts[key] = originalDraft }
+                    if navigation == origin && current === c && draft.isEmpty { draft = originalDraft }
                 }
             } else {
                 c.setDelivery(messageID, "提交结果未知")

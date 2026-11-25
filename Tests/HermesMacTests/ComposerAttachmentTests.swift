@@ -138,6 +138,8 @@ import AppKit
         defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
         let img = try image()
         let file = try ComposerAttachment(name: "report.txt", data: Data("report".utf8), mimeType: "text/plain")
+        store.draft = " \n\t"
+        XCTAssertFalse(store.canSend)
         store.addAttachments([img, file])
         XCTAssertTrue(store.canSend)
         await store.send()
@@ -146,7 +148,7 @@ import AppKit
         XCTAssertEqual(requests.map { $0["method"].string }, ["image.attach_bytes", "file.attach", "prompt.submit"])
         XCTAssertEqual(requests[0]["params"]["content_base64"].string, img.data.base64EncodedString())
         XCTAssertEqual(requests[1]["params"]["data_url"].string, "data:text/plain;base64," + file.data.base64EncodedString())
-        XCTAssertTrue(requests[2]["params"]["text"].string.contains("@file:\"uploads/report.txt\""))
+        XCTAssertEqual(requests[2]["params"]["text"].string, "[User attached image: \(img.name)]\n\n@file:\"uploads/report.txt\"")
         XCTAssertEqual(requests[2]["params"]["attachments"], .null, "Legacy servers consume session-staged images")
         let content = try XCTUnwrap(store.current?.messages.first(where: { $0.role == "user" })?.attachmentContent)
         XCTAssertTrue(content.text.isEmpty)
@@ -161,7 +163,7 @@ import AppKit
         let (store, client, defaults, name, address) = try await connectedStore()
         defer { client.disconnect(); defaults.removePersistentDomain(forName: name) }
         _ = try await fixture(["action": .string("configure"), "staged_images": .bool(true)], address: address)
-        store.draft = "比较这两张图"
+        store.draft = "\n比较这两张图\n\n"
         store.addAttachments([try image(), try image()])
         await store.send()
         let report = try await fixture(["action": .string("inspect")], address: address)
@@ -176,7 +178,8 @@ import AppKit
             XCTAssertEqual(images[index]["mime"].string, "image/png")
             XCTAssertEqual(upload.element["params"]["session_id"], prompt["params"]["session_id"])
         }
-        XCTAssertTrue(prompt["params"]["text"].string.contains("比较这两张图"))
+        XCTAssertTrue(prompt["params"]["text"].string.hasPrefix("比较这两张图\n\n[User attached image:"))
+        XCTAssertEqual(store.current?.messages.first(where: { $0.role == "user" })?.attachmentContent?.text, "比较这两张图")
         XCTAssertTrue(store.draftAttachments.isEmpty)
         XCTAssertNil(store.error)
     }
