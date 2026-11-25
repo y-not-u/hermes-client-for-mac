@@ -29,10 +29,14 @@ enum MediaDirective {
     static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "bmp"]
     private static let tags = try! NSRegularExpression(
         pattern: #"(?<!\S)MEDIA:\s*(?:"([^"]+)"|'([^']+)'|`([^`]+)`|((?:/|~/)[^\s`<>"']+))"#
+            + #"|!\[(?:\\.|[^\[\]\\]|\[(?:\\.|[^\[\]\\])*\])*\]\(\s*"#
+            + #"(?:<((?:/|~/)(?:\\.|[^<>\\])+)>|((?:/|~/)(?:\\.|[^\s()\\<>]|\((?:\\.|[^\s()\\])*\))+))"#
+            + #"(?:\s+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\((?:\\.|[^()\\])*\)))?\s*\)"#
     )
-    private static let inlineCode = try! NSRegularExpression(pattern: #"`+[^`]*`+"#)
+    private static let markdownEscape = try! NSRegularExpression(pattern: #"\\([\x21-\x2F\x3A-\x40\x5B-\x60\x7B-\x7E])"#)
+    private static let inlineCode = try! NSRegularExpression(pattern: #"(?<!`)(`+)(?!`).*?(?<!`)\1(?!`)"#)
 
-    /// Only outbound image directives are promoted. Code and quoted examples stay text.
+    /// Only assistant media references are promoted. Code and quoted examples stay text.
     static func segments(_ text: String, renderMedia: Bool) -> [MarkdownSegment] {
         var result: [MarkdownSegment] = []
         var buffer: [String] = []
@@ -64,6 +68,10 @@ enum MediaDirective {
                 buffer.append(line); continue
             }
             let source = line as NSString
+            guard source.range(of: "MEDIA:", options: .literal).location != NSNotFound
+                    || source.range(of: "![", options: .literal).location != NSNotFound else {
+                buffer.append(line); continue
+            }
             let fullRange = NSRange(location: 0, length: source.length)
             let codeRanges = inlineCode.matches(in: line, range: fullRange).map(\.range)
             var cursor = 0
@@ -71,18 +79,25 @@ enum MediaDirective {
                 guard !codeRanges.contains(where: {
                     NSIntersectionRange($0, match.range).length > 0 && !NSEqualRanges(NSIntersectionRange($0, match.range), $0)
                 }) else { continue }
-                let path = (1...4).first(where: { match.range(at: $0).location != NSNotFound })
-                    .map { source.substring(with: match.range(at: $0)) } ?? ""
-                let ext = (path as NSString).pathExtension.lowercased()
-                // Only absolute paths the service can resolve; every extension other than a
-                // previewable image becomes a download card instead of unclickable text.
+                guard let group = (1...6).first(where: { match.range(at: $0).location != NSNotFound }) else { continue }
+                let isMarkdownImage = group >= 5
+                var path = source.substring(with: match.range(at: group))
+                if isMarkdownImage {
+                    var start = match.range.location
+                    while start > 0, source.character(at: start - 1) == 0x5C { start -= 1 }
+                    guard (match.range.location - start).isMultiple(of: 2) else { continue }
+                    path = markdownEscape.stringByReplacingMatches(in: path, range: NSRange(path.startIndex..., in: path), withTemplate: "$1")
+                    path = path.removingPercentEncoding ?? path
+                }
+                let isImage = imageExtensions.contains((path as NSString).pathExtension.lowercased())
                 guard path.hasPrefix("/") || path.hasPrefix("~/"),
-                      !(path as NSString).lastPathComponent.isEmpty else { continue }
+                      !(path as NSString).lastPathComponent.isEmpty,
+                      !isMarkdownImage || (isImage && !path.hasPrefix("//")) else { continue }
                 let before = source.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
                 if !before.trimmingCharacters(in: .whitespaces).isEmpty { buffer.append(before) }
                 flush()
                 if seen.insert(path).inserted {
-                    result.append(imageExtensions.contains(ext) ? .image(path) : .file(path))
+                    result.append(isImage ? .image(path) : .file(path))
                 }
                 cursor = NSMaxRange(match.range)
             }

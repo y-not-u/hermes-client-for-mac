@@ -98,6 +98,41 @@ private actor ConcurrentImageFetches {
         XCTAssertEqual(MediaDirective.segments("```\nMEDIA:/tmp/incomplete.png", renderMedia: true), [.code("MEDIA:/tmp/incomplete.png", language: "")])
     }
 
+    func testMarkdownImagesResolveServerPathsAndDeduplicateMediaDirectives() {
+        let text = """
+        趋势 ![小红书黄金讨论折线图](/home/egg/projects/xhs-gold-index/gold-discussion.png) 如图
+        MEDIA:/home/egg/projects/xhs-gold-index/gold-discussion.png
+        ![带空格](<~/charts/图 表.PNG> "标题")
+        ![带括号](/tmp/chart(1).png)
+        """
+        XCTAssertEqual(MediaDirective.segments(text, renderMedia: true), [
+            .text("趋势 "), .image("/home/egg/projects/xhs-gold-index/gold-discussion.png"), .text(" 如图"),
+            .image("~/charts/图 表.PNG"), .image("/tmp/chart(1).png")
+        ])
+        XCTAssertEqual(MediaDirective.segments(text, renderMedia: false), [.text(text)])
+    }
+
+    func testMarkdownImagesIgnoreExamplesAndUnsupportedDestinations() {
+        let text = #"""
+        > ![引用](/tmp/quote.png)
+            ![缩进](/tmp/indent.png)
+        `![行内代码](/tmp/inline.png)`
+        `` ` ![行内代码](/tmp/multitick.png) ``
+        \![转义](/tmp/escaped.png)
+        ![外部](https://third-party.test/image.png)
+        ![外部](//third-party.test/image.png)
+        ![外部](/%2Fthird-party.test/image.png)
+        ![相对](images/chart.png)
+        ![文件](/tmp/report.pdf)
+        [普通链接](/tmp/chart.png)
+        ![尚未输出完整](/tmp/incomplete.png
+        """#
+        XCTAssertEqual(MediaDirective.segments(text, renderMedia: true), [.text(text)])
+        XCTAssertEqual(MediaDirective.segments("```md\n![代码](/tmp/fenced.png)\n```", renderMedia: true), [
+            .code("![代码](/tmp/fenced.png)", language: "md")
+        ])
+    }
+
     func testNonImageDirectivesBecomeDownloadCards() {
         let text = "证书\nMEDIA:/home/egg/.hermes/exports/openbot/openbot.lan.crt\nMEDIA:'/tmp/含 空格.zip'\nMEDIA:/tmp/图.png\nMEDIA:~/exports/dump.bin 说明"
         XCTAssertEqual(MediaDirective.segments(text, renderMedia: true), [
@@ -167,7 +202,12 @@ private actor ConcurrentImageFetches {
         let data = try png()
         MediaHTTPProtocol.configure(body: try JSONEncoder().encode(JSON.object(["dataUrl": .string("data:image/png;base64," + data.base64EncodedString())])))
         let client = try client(credentials: Credentials(sessionToken: "test-token"))
-        let imageRequest = request(service: client.service, path: "/home/egg/.hermes/profiles/financial/cache/图 + % # ?.png")
+        let markdown = ##"![图](/home/egg/.hermes/profiles/financial/cache/图%20+%20%25%20\#%20%3F.png)"##
+        guard case .image(let path)? = MediaDirective.segments(markdown, renderMedia: true).first else {
+            return XCTFail("Expected a server image from Markdown")
+        }
+        let imageRequest = request(service: client.service, path: path)
+        XCTAssertEqual(path, "/home/egg/.hermes/profiles/financial/cache/图 + % # ?.png")
         let result = try await client.imageData(for: imageRequest)
         XCTAssertEqual(result, data)
         let sent = try XCTUnwrap(MediaHTTPProtocol.requests.first)
