@@ -1,5 +1,9 @@
 # 验证与人工验收
 
+### 2026-11-25 聊天气泡宽度
+
+使用 `NSHostingView` 在 260 pt 的宽度约束下测量带内边距的 Markdown 区域。单行短句和含空行的短消息从 260 pt 收窄到 55 pt 和 69 pt。长消息仍自动换行，测得高度为 184 pt。代码块和表格的视口宽度仍为 260 pt。每轮测量这五种内容各 20 次，七轮耗时中位数从 295 ms 变为 286 ms。
+
 ### 2026-11-19 非图片 `MEDIA:` 文件下载
 
 助手回复中的 `MEDIA:/home/egg/.hermes/exports/openbot/openbot.lan.crt` 原先因为扩展名不在图片列表而保留为纯文本，无法点击。现改为：图片扩展名走原图片卡片，其余绝对路径生成文件卡片（文件名、远程路径、下载按钮、失败重试、在 Finder 中显示、复制远程路径）。下载复用 `/api/fs/read-data-url`，新增 `RemoteFileDecoder` 校验任意 `data:<mime>;base64,…` 与 16 MB 上限；字节不进入图片缓存，只在用户确认 `NSSavePanel` 后原子写入。

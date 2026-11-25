@@ -220,9 +220,7 @@ private struct MarkdownTextBlock: View, Equatable {
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
-
 }
 
 // A streamed suffix changes only its line; completed lines keep their attributed text.
@@ -271,7 +269,7 @@ private struct MarkdownLineView: View, Equatable {
                 .frame(height: 1)
                 .padding(.vertical, 6)
         } else if line.isEmpty {
-            Color.clear.frame(height: 4)
+            Color.clear.frame(width: 0, height: 4)
         } else {
             inline(line)
                 .font(.system(size: ChatTypography.scaled(13.5, for: fontSize)))
