@@ -52,6 +52,12 @@ struct Message: Identifiable, Equatable {
     let role: String
     var text: String
     var deliveryStatus: String?
+    var sentContent: SentMessageContent?
+
+    var attachmentContent: SentMessageContent? {
+        sentContent ?? SentMessageContent(prompt: text)
+    }
+
     init(id: String = UUID().uuidString, role: String, text: String) { self.id = id; self.role = role; self.text = text }
     init(_ json: JSON) {
         let row = json["_row_id"] == .null ? json["id"] : json["_row_id"]

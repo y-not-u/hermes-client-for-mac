@@ -717,7 +717,8 @@ import AppKit
             }
             if !attachments.isEmpty { uploadingAttachments.insert(attachmentContext) }
             guard let runtime = c.runtimeID, !runtime.isEmpty else { throw ClientError(message: "会话未恢复，请重连后再发送") }
-            var promptParts = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] : [text]
+            let messageText = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : text
+            var promptParts = messageText.isEmpty ? [] : [messageText]
             for attachment in attachments {
                 let response: JSON
                 do {
@@ -755,7 +756,10 @@ import AppKit
                 }
             }
             let prompt = attachments.isEmpty ? text : promptParts.joined(separator: "\n\n")
-            c.begin(prompt)
+            let sentContent = attachments.isEmpty ? nil : SentMessageContent(
+                text: messageText, attachments: attachments.map(SentAttachment.init)
+            )
+            c.begin(prompt, sentContent: sentContent)
             submitted = true
             let sentIDs = Set(attachments.map(\.id))
             attachmentDrafts[attachmentContext]?.removeAll { sentIDs.contains($0.id) }

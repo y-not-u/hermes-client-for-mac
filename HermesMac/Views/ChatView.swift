@@ -587,16 +587,19 @@ private struct MessageRowView: View, Equatable {
         if message.role == "tool" {
             ToolCallGroup(tools: [ToolCall(id: message.id, name: "工具返回", details: message.text, complete: true)])
         } else if message.role == "user" {
-            // User Message: Right Aligned Bubble
+            let content = message.attachmentContent
+            let text = content?.text ?? message.text
             HStack {
                 Spacer(minLength: 60)
 
                 VStack(alignment: .trailing, spacing: 4) {
                     HStack(spacing: 6) {
-                        CopyButton(text: message.text, labelText: "复制")
-                            .opacity(isHovered ? 1 : 0)
-                            .allowsHitTesting(isHovered)
-                            .accessibilityHidden(!isHovered)
+                        if !text.isEmpty {
+                            CopyButton(text: text, labelText: "复制")
+                                .opacity(isHovered ? 1 : 0)
+                                .allowsHitTesting(isHovered)
+                                .accessibilityHidden(!isHovered)
+                        }
                         Text("你")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
@@ -607,17 +610,24 @@ private struct MessageRowView: View, Equatable {
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                     }
-                    MarkdownView(text: message.text)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(
-                            Color.accentColor.opacity(0.12),
-                            in: RoundedRectangle(cornerRadius: 15, style: .continuous)
-                        )
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                                .strokeBorder(Color.accentColor.opacity(0.2), lineWidth: 0.8)
+                    VStack(alignment: .leading, spacing: 8) {
+                        if !text.isEmpty { MarkdownView(text: text) }
+                        if let content {
+                            ForEach(Array(content.attachments.enumerated()), id: \.offset) { _, attachment in
+                                SentAttachmentView(attachment: attachment)
+                            }
                         }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        Color.accentColor.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 15, style: .continuous)
+                            .strokeBorder(Color.accentColor.opacity(0.2), lineWidth: 0.8)
+                    }
                 }
             }
             .onHover { isHovered = $0 }
@@ -690,6 +700,57 @@ private struct MessageRowView: View, Equatable {
             }
             .onHover { isHovered = $0 }
         }
+    }
+}
+
+private struct SentAttachmentView: View {
+    let attachment: SentAttachment
+
+    private var kind: String {
+        if attachment.isImage { return "图片" }
+        let fileExtension = (attachment.name as NSString).pathExtension
+        return fileExtension.isEmpty ? "文件" : fileExtension.uppercased()
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let data = attachment.thumbnail, let image = NSImage(data: data) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 96, height: 64)
+                    .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 5))
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .accessibilityHidden(true)
+            } else {
+                Image(systemName: attachment.isImage ? "photo" : "doc")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 32, height: 32)
+                    .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
+                    .accessibilityHidden(true)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: attachment.name)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(kind)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: 140, alignment: .leading)
+        }
+        .padding(6)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.45), lineWidth: 1)
+        }
+        .help(attachment.name)
+        .accessibilityElement(children: .combine)
     }
 }
 

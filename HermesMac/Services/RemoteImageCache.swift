@@ -76,7 +76,18 @@ enum RemoteImageDecoder {
         return try file(source, url: url)
     }
 
+    static func attachmentThumbnail(_ data: Data) -> Data? {
+        guard data.count <= maxBytes,
+              let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
+        return (try? thumbnail(source, maxPixelSize: 256))?.data
+    }
+
     private static func file(_ source: CGImageSource, url: URL) throws -> RemoteImageFile {
+        let preview = try thumbnail(source, maxPixelSize: thumbnailPixelSize)
+        return RemoteImageFile(url: url, thumbnail: preview.data, pixelWidth: preview.width, pixelHeight: preview.height)
+    }
+
+    private static func thumbnail(_ source: CGImageSource, maxPixelSize: Int) throws -> (data: Data, width: Int, height: Int) {
         guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int,
@@ -84,7 +95,7 @@ enum RemoteImageDecoder {
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: thumbnailPixelSize
+                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
               ] as CFDictionary) else {
             throw ClientError(message: "无法解码图片，或图片尺寸过大")
         }
@@ -94,7 +105,7 @@ enum RemoteImageDecoder {
         }
         CGImageDestinationAddImage(destination, image, nil)
         guard CGImageDestinationFinalize(destination) else { throw ClientError(message: "无法生成图片预览") }
-        return RemoteImageFile(url: url, thumbnail: preview as Data, pixelWidth: width, pixelHeight: height)
+        return (preview as Data, width, height)
     }
 }
 

@@ -78,6 +78,39 @@ import AppKit
         XCTAssertTrue(store.draftAttachments.isEmpty)
     }
 
+    func testHistoryAttachmentReferencesBecomeCardsAfterTheMessageText() throws {
+        let prompt = "示例 `@file:\"example.txt\"`\n\n[User attached image: 粘贴图片.png]\n\n@file:\"uploads/含 空格.pdf\"\n\n@file:uploads/report.txt\n\n@file:`uploads/含\"引号.csv`\n[image]"
+        let message = Message(.object(["role": .string("user"), "content": .string(prompt)]))
+        let content = try XCTUnwrap(message.attachmentContent)
+
+        XCTAssertEqual(message.text, prompt)
+        XCTAssertEqual(content.text, "示例 `@file:\"example.txt\"`")
+        XCTAssertEqual(content.attachments.map(\.name), ["粘贴图片.png", "含 空格.pdf", "report.txt", "含\"引号.csv"])
+        XCTAssertEqual(content.attachments.map(\.isImage), [true, false, false, false])
+        XCTAssertNil(content.attachments[0].thumbnail)
+        XCTAssertNil(SentMessageContent(prompt: "[User attached image: 示例.png]\n\n后续正文"))
+    }
+
+    func testSnapshotPreservesThumbnailWhenHistoryReplacesTheLocalID() throws {
+        let c = Conversation(key: ConversationKey(service: "test", profile: "test", storedID: "test"))
+        let prompt = "[User attached image: image.png]"
+        let attachment = try SentAttachment(image())
+        XCTAssertNotNil(attachment.thumbnail)
+        c.begin(prompt, sentContent: SentMessageContent(text: "", attachments: [attachment]))
+
+        let restored = Message(id: "server-row", role: "user", text: prompt + "\n[image]")
+        c.snapshot(.object([:]), history: [restored])
+        XCTAssertEqual(c.messages.first?.id, restored.id)
+        XCTAssertEqual(c.messages.first?.attachmentContent?.attachments.first?.thumbnail, attachment.thumbnail)
+
+        // Another send with the same prompt must never take the earlier row's thumbnail.
+        c.begin(prompt, sentContent: SentMessageContent(text: "", attachments: [attachment]))
+        let ambiguous = Message(id: "another-row", role: "user", text: prompt)
+        c.snapshot(.object([:]), history: [restored, ambiguous])
+        XCTAssertNotNil(c.messages.first?.attachmentContent?.attachments.first?.thumbnail)
+        XCTAssertNil(c.messages.last?.attachmentContent?.attachments.first?.thumbnail)
+    }
+
     private func fixture(_ body: [String: JSON], address: String) async throws -> JSON {
         var request = URLRequest(url: try XCTUnwrap(URL(string: address + "/__test")))
         request.httpMethod = "POST"; request.httpBody = try JSONEncoder().encode(JSON.object(body))
@@ -115,6 +148,10 @@ import AppKit
         XCTAssertEqual(requests[1]["params"]["data_url"].string, "data:text/plain;base64," + file.data.base64EncodedString())
         XCTAssertTrue(requests[2]["params"]["text"].string.contains("@file:\"uploads/report.txt\""))
         XCTAssertEqual(requests[2]["params"]["attachments"], .null, "Legacy servers consume session-staged images")
+        let content = try XCTUnwrap(store.current?.messages.first(where: { $0.role == "user" })?.attachmentContent)
+        XCTAssertTrue(content.text.isEmpty)
+        XCTAssertEqual(content.attachments.map(\.name), [img.name, file.name])
+        XCTAssertNotNil(content.attachments.first?.thumbnail)
         XCTAssertTrue(store.draftAttachments.isEmpty)
         store.addAttachments([img])
         XCTAssertFalse(store.canSend, "Attachments must wait for the active turn to complete")

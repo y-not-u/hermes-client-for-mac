@@ -128,6 +128,7 @@ import Observation
                 error = "未能读取服务端历史，暂时无法确认上次消息。请稍后重新查询。"
             }
         }
+        restoreSentContent(from: previousMessages)
         historyBacklog = Array(messages.dropLast(100)); messages = Array(messages.suffix(100))
         // History responses can replace local UUIDs with server row IDs.
         // Keep locally observed tool groups attached to the same transcript message.
@@ -139,6 +140,28 @@ import Observation
             toolActivities[index].afterMessageID = restored.id
         }
         if !generating { activityID = nil }
+    }
+    private func restoreSentContent(from previous: [Message]) {
+        let previousUsers = previous.filter { $0.role == "user" }
+        let sent = previousUsers.filter { $0.sentContent != nil }
+        guard !sent.isEmpty else { return }
+        let byID = Dictionary(grouping: sent, by: \.id)
+        let promptKey: (Message) -> String = { SentMessageContent.withoutImagePlaceholders($0.text) }
+        let byText = Dictionary(grouping: previousUsers, by: promptKey)
+        let restoredByText = Dictionary(grouping: messages.filter { $0.role == "user" }, by: promptKey)
+        let restoredIDs = Set(messages.map(\.id))
+        for index in messages.indices where messages[index].role == "user" && messages[index].sentContent == nil {
+            let message = messages[index]
+            let prompt = promptKey(message)
+            if let sameRow = byID[message.id]?.first(where: { promptKey($0) == prompt }) {
+                messages[index].sentContent = sameRow.sentContent
+            } else if let matches = byText[prompt], matches.count == 1,
+                      restoredByText[prompt]?.count == 1, !restoredIDs.contains(matches[0].id) {
+                // The first history response replaces the optimistic ID. Identical prompts
+                // can carry different images, so ambiguous matches use the filename card.
+                messages[index].sentContent = matches[0].sentContent
+            }
+        }
     }
     func recoverUnconfirmedMessage() -> String? {
         commitPendingStream()
@@ -183,10 +206,11 @@ import Observation
         lastStreamCommit = Date()
         appendStream(text)
     }
-    func begin(_ text: String) {
+    func begin(_ text: String, sentContent: SentMessageContent? = nil) {
         commitPendingStream()
         streamID = nil; activityID = nil; error = nil; generating = true; unread = false
-        let message = Message(role: "user", text: text)
+        var message = Message(role: "user", text: text)
+        message.sentContent = sentContent
         messages.append(message)
         lastSubmittedMessageID = message.id
     }

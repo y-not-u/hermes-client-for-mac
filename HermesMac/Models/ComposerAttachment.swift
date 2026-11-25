@@ -1,6 +1,78 @@
 import AppKit
 import UniformTypeIdentifiers
 
+struct SentAttachment: Equatable {
+    let name: String
+    let isImage: Bool
+    var thumbnail: Data? = nil
+
+    init(_ attachment: ComposerAttachment) {
+        name = attachment.name
+        isImage = attachment.isImage
+        if isImage { thumbnail = RemoteImageDecoder.attachmentThumbnail(attachment.data) }
+    }
+
+    init?(reference: String) {
+        guard !reference.contains(where: \.isNewline) else { return nil }
+        let imagePrefix = "[User attached image: "
+        let filePrefix = "@file:"
+        if reference.hasPrefix(imagePrefix), reference.hasSuffix("]") {
+            name = String(reference.dropFirst(imagePrefix.count).dropLast())
+            isImage = true
+        } else if reference.hasPrefix(filePrefix) {
+            var path = reference.dropFirst(filePrefix.count)
+            if let quote = path.first, ["\"", "'", "`"].contains(quote) {
+                guard path.count >= 2, path.last == quote else { return nil }
+                path = path.dropFirst().dropLast()
+                guard !path.contains(quote) else { return nil }
+            } else if path.contains(where: \.isWhitespace) {
+                return nil
+            }
+            guard !path.isEmpty else { return nil }
+            name = (String(path) as NSString).lastPathComponent
+            isImage = false
+        } else {
+            return nil
+        }
+        guard !name.isEmpty else { return nil }
+    }
+}
+
+struct SentMessageContent: Equatable {
+    let text: String
+    let attachments: [SentAttachment]
+
+    init(text: String, attachments: [SentAttachment]) {
+        self.text = text
+        self.attachments = attachments
+    }
+
+    init?(prompt: String) {
+        var paragraphs = Self.withoutImagePlaceholders(prompt).components(separatedBy: "\n\n")
+        var attachments: [SentAttachment] = []
+        while let last = paragraphs.last, let attachment = SentAttachment(reference: last) {
+            attachments.append(attachment)
+            paragraphs.removeLast()
+        }
+        guard !attachments.isEmpty else { return nil }
+        self.init(text: paragraphs.joined(separator: "\n\n"), attachments: attachments.reversed())
+    }
+
+    static func withoutImagePlaceholders(_ prompt: String) -> String {
+        // With inline_images=false, history can append one [image] line per image part.
+        var text = prompt[...]
+        while text.hasSuffix("\n[image]") {
+            text = text.dropLast("\n[image]".count)
+            while text.last?.isNewline == true { text.removeLast() }
+        }
+        guard text != prompt,
+              text.components(separatedBy: "\n\n").reversed()
+                .prefix(while: { SentAttachment(reference: $0) != nil })
+                .contains(where: { SentAttachment(reference: $0)?.isImage == true }) else { return prompt }
+        return String(text)
+    }
+}
+
 struct ComposerAttachment: Identifiable {
     static let maxBytes = 10 * 1024 * 1024
     static let maxCount = 8
