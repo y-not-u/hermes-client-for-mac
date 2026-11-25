@@ -4,6 +4,14 @@
 
 Hermes for Mac is a native SwiftUI client for macOS 14+; the Hermes service runs separately. `HermesMac/Views/` contains UI components, `Stores/` holds observable application and conversation state, `Models/` defines protocol and parsing types, and `Services/` handles networking, authentication, notifications, and AppKit/WebKit integration. Assets live in `Assets.xcassets`; the bundled desktop viewer lives in `Resources/BotScreen/`. `Tools/CredentialHelper/` contains the credential helper. XCTest suites are in `Tests/HermesMacTests/`, automation in `script/`, and setup, protocol, and validation notes in `docs/`.
 
+## Architecture & Performance
+
+Prioritize runtime performance in architectural and implementation decisions while preserving correctness. Design clear module boundaries, explicit state ownership, and predictable data flow so the app stays responsive as conversation history and event volume grow.
+
+- Keep main-actor work focused on UI state and presentation. Run expensive parsing, transformation, and blocking I/O off the main actor, and keep UI state updates narrowly scoped.
+- Use incremental updates for growing data and bound the memory used by caches and queues. Minimize repeated work and broad SwiftUI invalidation on hot paths.
+- For changes that may affect a hot path, compare before and after under a representative workload using Instruments or existing telemetry. Choose metrics relevant to the change, such as interaction latency, scrolling smoothness, CPU time, or memory use, and record the results with the change.
+
 ## Build, Test, and Development Commands
 
 Use full Xcode with the macOS SDK selected through `xcode-select`, plus Python 3.
