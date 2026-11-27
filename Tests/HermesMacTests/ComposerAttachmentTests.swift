@@ -44,6 +44,55 @@ import AppKit
         XCTAssertThrowsError(try ComposerAttachment.read(from: pasteboard))
     }
 
+    func testFinderDropAddsZIPWithoutInsertingPathAndRejectsFolder() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let zip = directory.appendingPathComponent("archive.zip")
+        let bytes = Data([0x50, 0x4b, 0x03, 0x04])
+        try bytes.write(to: zip)
+        let pasteboard = board()
+        defer { pasteboard.releaseGlobally() }
+        // Finder can provide a plain-text representation alongside the file URL.
+        let item = NSPasteboardItem()
+        item.setString(zip.absoluteString, forType: .fileURL)
+        item.setString(zip.path, forType: .string)
+        XCTAssertTrue(pasteboard.writeObjects([item]))
+        let drag = FileDrag(pasteboard: pasteboard)
+        let editor = SubmitTextView()
+        editor.isRichText = false
+        editor.updateDragTypeRegistration()
+        editor.string = "文字草稿"
+        var received: [ComposerAttachment] = []
+        var error: String?
+        editor.onPasteAttachments = { received += $0 }
+        editor.onPasteError = { error = $0 }
+
+        XCTAssertTrue(editor.registeredDraggedTypes.contains(.fileURL))
+        XCTAssertEqual(editor.draggingEntered(drag), .copy)
+        XCTAssertEqual(editor.draggingUpdated(drag), .copy)
+        XCTAssertTrue(editor.prepareForDragOperation(drag))
+        XCTAssertTrue(editor.performDragOperation(drag))
+        XCTAssertEqual(received.map(\.name), ["archive.zip"])
+        XCTAssertEqual(received.first?.data, bytes)
+        XCTAssertEqual(editor.string, "文字草稿")
+
+        editor.isEditable = false
+        XCTAssertEqual(editor.draggingEntered(drag), [])
+        XCTAssertFalse(editor.prepareForDragOperation(drag))
+        XCTAssertFalse(editor.performDragOperation(drag))
+        XCTAssertEqual(received.count, 1)
+
+        editor.isEditable = true
+        XCTAssertTrue(editor.registeredDraggedTypes.contains(.fileURL))
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.writeObjects([zip as NSURL, directory as NSURL]))
+        XCTAssertFalse(editor.performDragOperation(drag))
+        XCTAssertTrue(error?.contains("文件夹") == true)
+        XCTAssertEqual(received.count, 1)
+        XCTAssertEqual(editor.string, "文字草稿")
+    }
+
     func testTextPasteboardIsNotAnAttachmentAndTIFFConvertsToPNG() throws {
         let pasteboard = board(); defer { pasteboard.releaseGlobally() }
         pasteboard.setString("ordinary text", forType: .string)
@@ -246,4 +295,31 @@ import AppKit
         XCTAssertTrue(store.draft.isEmpty)
     }
 
+}
+
+@MainActor private final class FileDrag: NSObject, NSDraggingInfo {
+    let draggingPasteboard: NSPasteboard
+    let draggingSourceOperationMask: NSDragOperation = .copy
+    let draggingDestinationWindow: NSWindow? = nil
+    let draggingLocation = NSPoint.zero
+    let draggedImageLocation = NSPoint.zero
+    let draggedImage: NSImage? = nil
+    let draggingSource: Any? = nil
+    let draggingSequenceNumber = 0
+    var draggingFormation: NSDraggingFormation = .default
+    var animatesToDestination = false
+    var numberOfValidItemsForDrop = 0
+    let springLoadingHighlight: NSSpringLoadingHighlight = .none
+
+    init(pasteboard: NSPasteboard) { draggingPasteboard = pasteboard }
+
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+    func resetSpringLoading() {}
+    func enumerateDraggingItems(
+        options enumOpts: NSDraggingItemEnumerationOptions,
+        for view: NSView?,
+        classes classArray: [AnyClass],
+        searchOptions: [NSPasteboard.ReadingOptionKey: Any],
+        using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void
+    ) {}
 }

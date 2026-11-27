@@ -346,3 +346,8 @@ HERMES_LIVE_SERVER='<自行填写已授权服务地址>' HERMES_LIVE_CHAT=1 swif
 - 新增真实聊天窗口回归：初次定位底部，上翻后流式追加不抢回阅读位置，缩窄窗口后仍保持上翻状态，手动回到底部后继续跟随流式文字；原电脑展开、窄窗口和 viewer 实例保留测试通过。
 - `./script/test.sh`：153 项，152 通过、1 项 opt-in live test 跳过、0 失败。日志 `/tmp/hermes-resize-full.log`。`./script/build_and_run.sh --verify`：Debug 签名构建、开发版启动与进程检查通过，构建日志 `/tmp/hermes-mac-build.log`。`git diff --check` 通过。
 - 尚未对用户原始长会话做人工连续拖动或帧率采样；原生文本仍需随实际宽度重新换行。人工验收可在 Hermes Dev 连续拖动窗口边缘，再分别检查上翻阅读、正在生成回复及打开电脑时的缩放体验。
+
+## 2026-11-27 从 Finder 拖放文件到输入框
+
+- `ComposerAttachmentTests` 模拟 Finder 拖放。验证输入框注册文件拖放类型，ZIP 同时带路径文字时仍添加为附件，保留草稿文字，禁用输入框时拒收文件，文件与文件夹混拖时整批拒绝。
+- 在独立检出中运行 `./script/test.sh`，183 项通过，1 项真实服务测试跳过。Finder 界面中的实际拖放未做人工验证。

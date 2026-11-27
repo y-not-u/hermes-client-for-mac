@@ -132,11 +132,11 @@
 显示层是原生 SwiftUI 外壳和 WKWebView 的本地 `hermes-botscreen://viewer/` 资源。noVNC 1.6.0 及 pako 固定版本离线打包，许可证和下载校验在 `Resources/BotScreen/VENDOR.md`。页面只加载本地模块，禁止外部导航和来自其他 frame/origin 的消息；票据 URL 不写日志，显示错误不包含 WebSocket 的原始地址。
 
 
-## 输入框粘贴附件
+## 输入框附件
 
-输入框使用原生 `NSTextView` 的粘贴入口与可读剪贴板类型，支持 ⌘V 和系统粘贴命令。Finder 文件 URL 优先于同一剪贴板的缩略图/文字表示；剪贴板 PNG 直接使用，TIFF 转为 PNG。普通文字继续走系统文本粘贴，附件不会替换已输入文字。附件列表提供图片缩略图、文件名、大小与移除按钮；支持不输入文字只发附件。单文件上限 10 MB，每份草稿最多 8 个附件、合计 32 MB；文件夹报错，整次粘贴不会部分加入。
+可以从 Finder 将文件拖入输入框，或通过 ⌘V 和系统粘贴命令添加附件。文件 URL 优先于同一剪贴板或拖放项的文字表示。剪贴板 PNG 直接使用，TIFF 转为 PNG。附件会显示在输入框上方，保留已输入的文字。附件列表提供图片缩略图、文件名、大小与移除按钮，支持只发附件。单文件上限 10 MB，每份草稿最多 8 个附件、合计 32 MB。一次拖放或粘贴中有文件夹时，整批拒绝并显示错误。
 
-附件字节在粘贴时复制到内存，按 `(service, profile, storedID?)` 隔离，切换会话可以取回，创建会话或选择模型创建会话时一同迁移。未发送附件不跨应用重启保存。发送前先创建/恢复会话，再逐项调用：
+附件字节在添加时复制到内存，按 `(service, profile, storedID?)` 隔离，切换会话可以取回，创建会话或选择模型创建会话时一同迁移。未发送附件不跨应用重启保存。发送前先创建/恢复会话，再逐项调用：
 
 - 图片：`image.attach_bytes {profile, session_id: runtimeID, filename, content_base64}`。要求响应 `attached=true` 和 `path`。旧版 TUI 服务将图片加入下一轮多模态输入；新版 Gateway 响应另带 `mime`，只暂存字节，客户端必须在随后的 `prompt.submit` 中携带 `attachments: [{path, mime}]` 才会提交图片。仅使用服务返回的路径与 MIME，不将本机路径写入消息充当图片。旧版支持 PNG/JPEG/GIF/WebP/BMP，新版 Gateway 支持 PNG/JPEG/GIF/WebP；其他格式的文件走普通文件附件。
 - 文件（含 PDF）：`file.attach {profile, session_id: runtimeID, name, data_url}`。要求响应 `attached=true` 和 `ref_text`；把服务返回的 `@file:` 引用追加到消息正文，不把本机路径当作远程路径。

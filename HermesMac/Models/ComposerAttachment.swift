@@ -90,26 +90,29 @@ struct ComposerAttachment: Identifiable {
         self.name = name; self.data = data; self.mimeType = mimeType
     }
 
+    @MainActor static func readFiles(from pasteboard: NSPasteboard) throws -> [ComposerAttachment] {
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        guard urls.count <= maxCount else { throw ClientError(message: "一次最多添加 8 个附件") }
+        return try urls.map { url in
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            guard values.isRegularFile == true else { throw ClientError(message: "暂不支持添加文件夹：\(url.lastPathComponent)") }
+            guard (values.fileSize ?? 0) <= maxBytes else { throw ClientError(message: "附件 \(url.lastPathComponent) 超过 10 MB 限制") }
+            let type = UTType(filenameExtension: url.pathExtension)
+            let supportedImages = ["png", "jpg", "jpeg", "gif", "webp", "bmp"]
+            let mime = supportedImages.contains(url.pathExtension.lowercased()) ? (type?.preferredMIMEType ?? "application/octet-stream") : "application/octet-stream"
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            let data = try handle.read(upToCount: maxBytes + 1) ?? Data()
+            return try ComposerAttachment(name: url.lastPathComponent, data: data, mimeType: mime)
+        }
+    }
+
     /// File URLs take precedence over a Finder item's thumbnail or text representation.
     @MainActor static func read(from pasteboard: NSPasteboard) throws -> [ComposerAttachment] {
-        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
-        if !urls.isEmpty {
-            guard urls.count <= maxCount else { throw ClientError(message: "一次最多粘贴 8 个附件") }
-            return try urls.map { url in
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-                guard values.isRegularFile == true else { throw ClientError(message: "暂不支持粘贴文件夹：\(url.lastPathComponent)") }
-                guard (values.fileSize ?? 0) <= maxBytes else { throw ClientError(message: "附件 \(url.lastPathComponent) 超过 10 MB 限制") }
-                let type = UTType(filenameExtension: url.pathExtension)
-                let supportedImages = ["png", "jpg", "jpeg", "gif", "webp", "bmp"]
-                let mime = supportedImages.contains(url.pathExtension.lowercased()) ? (type?.preferredMIMEType ?? "application/octet-stream") : "application/octet-stream"
-                let handle = try FileHandle(forReadingFrom: url)
-                defer { try? handle.close() }
-                let data = try handle.read(upToCount: maxBytes + 1) ?? Data()
-                return try ComposerAttachment(name: url.lastPathComponent, data: data, mimeType: mime)
-            }
-        }
+        let files = try readFiles(from: pasteboard)
+        if !files.isEmpty { return files }
         let items = (pasteboard.pasteboardItems ?? []).filter { $0.availableType(from: [.png, .tiff]) != nil }
         guard items.count <= maxCount else { throw ClientError(message: "一次最多粘贴 8 个附件") }
         return try items.compactMap { item in

@@ -268,6 +268,7 @@ struct ComposerTextView: NSViewRepresentable {
         view.onPasteAttachments = onPasteAttachments
         view.onPasteError = onPasteError
         view.isEditable = enabled
+        view.updateDragTypeRegistration()
         scroll.documentView = view
         return scroll
     }
@@ -311,6 +312,13 @@ final class SubmitTextView: NSTextView {
         [.fileURL, .png, .tiff] + super.readablePasteboardTypes
     }
 
+    override func updateDragTypeRegistration() {
+        super.updateDragTypeRegistration()
+        if isEditable && !registeredDraggedTypes.contains(.fileURL) {
+            registerForDraggedTypes(registeredDraggedTypes + [.fileURL])
+        }
+    }
+
     override func readSelection(from pasteboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
         if [.fileURL, .png, .tiff].contains(type) {
             guard isEditable else { return false }
@@ -326,6 +334,43 @@ final class SubmitTextView: NSTextView {
             }
         }
         return super.readSelection(from: pasteboard, type: type)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard isFileDrag(sender) else { return super.draggingEntered(sender) }
+        return fileDropOperation(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard isFileDrag(sender) else { return super.draggingUpdated(sender) }
+        return fileDropOperation(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard isFileDrag(sender) else { return super.prepareForDragOperation(sender) }
+        return fileDropOperation(sender) == .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard isFileDrag(sender) else { return super.performDragOperation(sender) }
+        guard fileDropOperation(sender) == .copy, let onPasteAttachments else { return false }
+        do {
+            let attachments = try ComposerAttachment.readFiles(from: sender.draggingPasteboard)
+            guard !attachments.isEmpty else { return false }
+            onPasteAttachments(attachments)
+            return true
+        } catch {
+            onPasteError?(error.localizedDescription)
+            return false
+        }
+    }
+
+    private func isFileDrag(_ sender: NSDraggingInfo) -> Bool {
+        sender.draggingPasteboard.types?.contains(.fileURL) == true
+    }
+
+    private func fileDropOperation(_ sender: NSDraggingInfo) -> NSDragOperation {
+        isEditable && onPasteAttachments != nil && sender.draggingSourceOperationMask.contains(.copy) ? .copy : []
     }
 
     override func paste(_ sender: Any?) {
